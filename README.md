@@ -36,8 +36,8 @@ Connect your MKS TFT32 to the Raspberry Pi as follows:
 |---------------|------------------|------|-------------|
 | VCC (5V)      | Pin 2            | 5V   | Power       |
 | GND           | Pin 6            | GND  | Ground      |
-| TX            | Pin 10           | GPIO15 (RX) | TFT transmit to Pi receive |
-| RX            | Pin 8            | GPIO14 (TX) | TFT receive from Pi transmit |
+| TX            | Pin 10           | GPIO15 (RxD) | TFT transmit to Pi receive |
+| RX            | Pin 8            | GPIO14 (TxD) | TFT receive from Pi transmit |
 
 **Note:** Some TFT32 versions may have different pin labels (like UART_TX/UART_RX). Use the UART/serial pins, not the ones for connecting to printer mainboard.
 
@@ -67,8 +67,32 @@ sudo raspi-config
 cd /home/pi  # or your preferred directory
 git clone <this-repository>  # or download the files
 cd TFT32-KlipperInfo
+```
 
-pip3 install -r requirements.txt
+**Option A: Use the automated installer (recommended):**
+```bash
+chmod +x install.sh  # Make the script executable
+./install.sh         # Run the installer
+```
+
+**Option B: Manual installation if you get "externally-managed-environment" error:**
+
+Method 1 - System packages (preferred):
+```bash
+sudo apt install python3-requests python3-serial python3-websockets
+```
+
+Method 2 - Virtual environment:
+```bash
+sudo apt install python3-venv python3-full
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Method 3 - Override system protection (not recommended):
+```bash
+pip3 install -r requirements.txt --break-system-packages
 ```
 
 ### 4. Configure Your Setup
@@ -92,8 +116,19 @@ DISPLAY_PINS = {
 
 ### 5. Test the Installation
 
+**If you used system packages or the installer:**
 ```bash
 python3 klipper_tft32_monitor.py
+```
+
+**If you used a virtual environment:**
+```bash
+source venv/bin/activate
+python3 klipper_tft32_monitor.py
+```
+*or directly:*
+```bash
+./venv/bin/python3 klipper_tft32_monitor.py
 ```
 
 If everything is working correctly, you should see:

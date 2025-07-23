@@ -32,8 +32,8 @@ Your TFT32 thinks it's communicating with a printer mainboard, but it's actually
 MKS TFT32      →    Raspberry Pi
 VCC (5V)       →    Pin 2 (5V)
 GND            →    Pin 6 (GND)
-TX             →    Pin 10 (GPIO15, RX)
-RX             →    Pin 8 (GPIO14, TX)
+TX             →    Pin 10 (GPIO15, RxD)
+RX             →    Pin 8 (GPIO14, TxD)
 ```
 
 ## Installation Steps

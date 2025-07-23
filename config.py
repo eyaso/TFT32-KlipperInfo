@@ -7,8 +7,8 @@ MOONRAKER_HOST = "localhost"  # Change to your Raspberry Pi IP if running remote
 MOONRAKER_PORT = 7125
 
 # TFT32 Serial settings
-TFT32_SERIAL_PORT = "/dev/ttyS0"  # Serial port (GPIO14/15 on Pi)
-TFT32_BAUDRATE = 115200           # Common baudrate for MKS TFT displays
+TFT32_SERIAL_PORT = "/dev/ttyS0"  # Serial port (GPIO14 TxD, GPIO15 RxD)
+TFT32_BAUDRATE = 250000           # Common baudrate for MKS TFT displays
 
 # Alternative serial ports:
 # "/dev/ttyAMA0" - Primary UART (disable Bluetooth first)
