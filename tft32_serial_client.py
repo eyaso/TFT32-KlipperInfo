@@ -81,14 +81,25 @@ class TFT32SerialClient:
     
     def _communication_loop(self):
         """Main communication loop to handle TFT commands"""
+        last_temp_send = 0
+        temp_send_interval = 2.0  # Send temperatures every 2 seconds
+        
         while self.running and self.serial_conn and self.serial_conn.is_open:
             try:
+                current_time = time.time()
+                
+                # Check for incoming commands from TFT
                 if self.serial_conn.in_waiting > 0:
                     line = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if line:
                         self._handle_tft_command(line)
                 
-                # Send periodic status updates
+                # Send periodic temperature updates even if TFT doesn't request them
+                if current_time - last_temp_send >= temp_send_interval:
+                    self._send_temperature_response()
+                    last_temp_send = current_time
+                    self.logger.debug("Sent periodic temperature update to TFT")
+                
                 time.sleep(0.1)
                 
             except Exception as e:
