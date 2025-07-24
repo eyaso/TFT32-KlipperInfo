@@ -40,11 +40,11 @@ def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
         while time.time() - start_time < timeout:
             try:
                 # Send the CRITICAL temperature response that establishes connection
-                # The @: prefix is detected by TFT firmware to set infoHost.connected = true
+                # Standard Marlin M105 format: T:current /target B:current /target @:power B@:bed_power
                 if response_count % 5 == 0:  # Every ~1 second  
-                    ser.write(b"@:0 T:25.0/0.0 B:22.0/0.0\r\n")
+                    ser.write(b"T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
                     ser.flush()
-                    print(f"🌡️ Sent connection temperature (with @: prefix)")
+                    print(f"🌡️ Sent connection temperature (standard M105 format)")
                 
                 # Send firmware identification periodically
                 if response_count % 10 == 0:  # Every ~2 seconds

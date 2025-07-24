@@ -140,11 +140,11 @@ class TFT32StandardClient:
     
     def _send_temperature_response(self):
         """Send temperature data in standard M105 response format"""
-        # Include @: prefix which is CRITICAL for TFT connection detection (infoHost.connected = true)
-        response = (f"@:0 T:{self.current_temps['hotend_temp']:.1f}/"
-                   f"{self.current_temps['hotend_target']:.1f} "
-                   f"B:{self.current_temps['bed_temp']:.1f}/"
-                   f"{self.current_temps['bed_target']:.1f}\r\n")
+        # Standard Marlin M105 format: T:current /target B:current /target @:power B@:bed_power
+        response = (f"T:{self.current_temps['hotend_temp']:.1f} /"
+                    f"{self.current_temps['hotend_target']:.1f} "
+                    f"B:{self.current_temps['bed_temp']:.1f} /"
+                    f"{self.current_temps['bed_target']:.1f} @:0 B@:0\r\n")
         self._send_response(response)
     
     def _send_position_response(self):
