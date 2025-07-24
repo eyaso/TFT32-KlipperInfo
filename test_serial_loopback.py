@@ -5,10 +5,11 @@ Test serial communication loopback
 
 import serial
 import time
+import config
 
 def test_loopback():
-    port = "/dev/ttyS0"
-    baudrate = 115200
+    port = config.TFT32_SERIAL_PORT
+    baudrate = config.TFT32_BAUDRATE
     
     print(f"🔗 Testing serial loopback on {port} at {baudrate} baud")
     print("⚠️  IMPORTANT: Connect Pin 8 to Pin 10 on Raspberry Pi for this test!")
@@ -50,8 +51,8 @@ def test_loopback():
         print(f"❌ Error: {e}")
 
 def test_tft_communication():
-    port = "/dev/ttyS0"
-    baudrate = 115200
+    port = config.TFT32_SERIAL_PORT
+    baudrate = config.TFT32_BAUDRATE
     
     print(f"🔗 Testing TFT communication on {port}")
     print("📺 Remove loopback wire and connect to TFT")

@@ -10,13 +10,14 @@ import logging
 import threading
 from typing import Dict, Optional
 import re
+import config
 
 class TFT32StandardClient:
     """Client for communicating with TFT32 using standard G-code protocol"""
     
-    def __init__(self, port: str = "/dev/ttyS0", baudrate: int = 115200):
-        self.port = port
-        self.baudrate = baudrate
+    def __init__(self, port: str = None, baudrate: int = None):
+        self.port = port or config.TFT32_SERIAL_PORT
+        self.baudrate = baudrate or config.TFT32_BAUDRATE
         self.serial_conn = None
         self.logger = logging.getLogger(__name__)
         self.running = False
@@ -34,10 +35,10 @@ class TFT32StandardClient:
             'state': 'standby',
             'progress': 0.0,
             'filename': '',
-            'print_time': 0,
+            'print_time': 0.0,
             'remaining_time': 0,
-            'current_layer': 0,
-            'total_layers': 0
+            'current_layer': None,
+            'total_layers': None
         }
         
         self.last_print_state = 'standby'

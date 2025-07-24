@@ -1,32 +1,39 @@
 #!/usr/bin/env python3
 """
 TFT32 Connection Helper
-Sends proper responses to establish TFT connection and clear "no printer attached" message
+Establishes initial connection with TFT32 by sending proper handshake sequence
 """
 
 import serial
 import time
-import sys
 import argparse
+import config
 
-def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
-    """Send proper responses to establish TFT connection"""
+def establish_connection(port=None, baudrate=None, timeout=30):
+    """
+    Establish connection with TFT32 by sending the required initial responses
+    
+    Args:
+        port: Serial port (default from config)
+        baudrate: Baud rate (default from config) 
+        timeout: Timeout in seconds (default: 30)
+    """
+    port = port or config.TFT32_SERIAL_PORT
+    baudrate = baudrate or config.TFT32_BAUDRATE
     
     print(f"🔗 TFT32 Connection Helper")
-    print(f"📡 Connecting to {port} at {baudrate} baud...")
+    print(f"🎯 Goal: Establish connection and fix 'no printer attached' status")
+    print(f"📡 Port: {port}")
+    print(f"⚡ Baud: {baudrate}")
+    print(f"⏱️  Timeout: {timeout}s")
+    print()
     
     try:
-        # Open serial connection
         ser = serial.Serial(
-            port=port,
-            baudrate=baudrate,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
+            port, 
+            baudrate, 
             timeout=1,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False
+            write_timeout=2
         )
         
         print(f"✅ Connected to TFT32")
@@ -110,35 +117,21 @@ def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
         return False
 
 def main():
-    """Main function with command line options"""
-    parser = argparse.ArgumentParser(description="TFT32 Connection Helper - Establish connection to clear 'no printer attached'")
-    parser.add_argument("--port", default="/dev/ttyS0", help="Serial port (default: /dev/ttyS0)")
-    parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
-    parser.add_argument("--timeout", type=int, default=30, help="Timeout in seconds (default: 30)")
+    parser = argparse.ArgumentParser(description="TFT32 Connection Helper - Establish TFT connection")
+    parser.add_argument("--port", default=config.TFT32_SERIAL_PORT, 
+                       help=f"Serial port (default: {config.TFT32_SERIAL_PORT})")
+    parser.add_argument("--baud", type=int, default=config.TFT32_BAUDRATE, 
+                       help=f"Baud rate (default: {config.TFT32_BAUDRATE})")
+    parser.add_argument("--timeout", type=int, default=30, help="Connection timeout in seconds (default: 30)")
     
     args = parser.parse_args()
     
-    print(f"🚀 Starting TFT32 Connection Helper...")
-    print(f"📡 Port: {args.port}")
-    print(f"⚡ Baud: {args.baud}")
-    print(f"⏱️ Timeout: {args.timeout}s")
-    print(f"")
-    print(f"🔧 What this does:")
-    print(f"   - Sends temperature responses with @: prefix")
-    print(f"   - This triggers TFT connection detection")
-    print(f"   - Changes status from 'no printer attached' to connected")
-    print(f"   - Responds to TFT commands properly")
-    print(f"")
-    
-    if establish_connection(args.port, args.baud, args.timeout):
-        print(f"")
-        print(f"🎉 Success! Your TFT should now show as connected.")
-        print(f"🔄 You can now start the full monitor:")
-        print(f"   python3 klipper_tft32_monitor.py")
-    else:
-        print(f"")
-        print(f"❌ Connection helper failed. Check connections and try again.")
-        sys.exit(1)
+    try:
+        establish_connection(args.port, args.baud, args.timeout)
+    except KeyboardInterrupt:
+        print("\n🛑 Connection helper stopped by user")
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     main() 
