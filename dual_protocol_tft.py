@@ -21,9 +21,20 @@ class FirmwareType(Enum):
     BIGTREETECH = "bigtreetech"    # BIGTREETECH firmware
 
 class DualProtocolTFT:
-    def __init__(self, serial_port: str = '/dev/ttyS0', baudrate: int = 250000):
-        self.serial_port = serial_port
-        self.baudrate = baudrate
+    def __init__(self):
+        # Load config first
+        try:
+            import config
+            self.serial_port = getattr(config, 'TFT32_SERIAL_PORT', '/dev/ttyS0')
+            self.baudrate = getattr(config, 'TFT32_BAUDRATE', 57600)
+            self.moonraker_host = getattr(config, 'MOONRAKER_HOST', 'localhost')
+            self.moonraker_port = getattr(config, 'MOONRAKER_PORT', 7125)
+        except ImportError:
+            self.serial_port = '/dev/ttyS0'
+            self.baudrate = 57600
+            self.moonraker_host = 'localhost'
+            self.moonraker_port = 7125
+            
         self.serial_conn: Optional[serial.Serial] = None
         self.connected = False
         self.running = False
@@ -32,7 +43,7 @@ class DualProtocolTFT:
         self.firmware_type = FirmwareType.UNKNOWN
         self.detection_complete = False
         
-        # State
+        # Real printer state (updated from Moonraker)
         self.current_temps = {
             'hotend_temp': 25.0,
             'hotend_target': 0.0,
@@ -41,29 +52,20 @@ class DualProtocolTFT:
         }
         self.print_stats = {
             'state': 'standby',
-            'progress': 75.0,
-            'filename': 'test_print.gcode',
-            'print_time': 4500.0,  # 75 minutes
-            'remaining_time': 1500  # 25 minutes
+            'progress': 0.0,
+            'filename': '',
+            'print_time': 0.0,
+            'remaining_time': 0
         }
-        
-        # Comprehensive data for custom TFT screen (like working version)
-        self.comprehensive_data = {
-            'hotend_temp': 25.0,
-            'hotend_target': 0.0,
-            'bed_temp': 22.0,
-            'bed_target': 0.0,
-            'state': 'printing',
-            'progress': 75.0,
-            'x_pos': 125.5,
-            'y_pos': 89.2,
-            'z_pos': 15.75,
-            'print_duration': 4500.0,
-            'estimated_time': 1500.0,
-            'filename': 'test_print.gcode',
+        self.position = {
+            'x_pos': 150.0,
+            'y_pos': 150.0,
+            'z_pos': 10.0
+        }
+        self.motion_report = {
             'print_speed': 100,
             'flow_rate': 100,
-            'fan_speed': 50
+            'fan_speed': 0
         }
         
         # Setup logging
@@ -88,6 +90,9 @@ class DualProtocolTFT:
             self.connected = True
             self.logger.info(f"🔌 Connected to {self.serial_port} at {self.baudrate} baud")
             
+            # Test Moonraker connection
+            await self._test_moonraker_connection()
+            
             # Start detection process
             await self._detect_firmware()
             return True
@@ -97,6 +102,19 @@ class DualProtocolTFT:
             self.connected = False
             return False
 
+    async def _test_moonraker_connection(self):
+        """Test connection to Moonraker"""
+        try:
+            url = f"http://{self.moonraker_host}:{self.moonraker_port}/server/info"
+            response = requests.get(url, timeout=3)
+            if response.status_code == 200:
+                self.logger.info(f"✅ Moonraker connected at {self.moonraker_host}:{self.moonraker_port}")
+            else:
+                self.logger.warning(f"⚠️ Moonraker returned status {response.status_code}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Cannot connect to Moonraker: {e}")
+            self.logger.info("📊 Will use fallback data for TFT")
+
     async def _detect_firmware(self):
         """Detect firmware type by analyzing initial communication"""
         self.logger.info("🔍 Detecting TFT firmware type...")
@@ -104,14 +122,12 @@ class DualProtocolTFT:
         # Wait for initial commands from TFT
         detection_timeout = 10  # seconds
         start_time = time.time()
-        received_commands = []
         
         while time.time() - start_time < detection_timeout and not self.detection_complete:
             if self.serial_conn and self.serial_conn.in_waiting > 0:
                 try:
                     incoming = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if incoming:
-                        received_commands.append(incoming)
                         self.logger.info(f"📥 Received: '{incoming}'")
                         
                         # Try to detect based on command format
@@ -157,10 +173,9 @@ class DualProtocolTFT:
     async def _send_generic_response(self, command: str):
         """Send a generic response during detection phase"""
         if 'M105' in command:
-            # Send temperature in both formats to see what works
-            await self._send_response("T:25.0 /0.0 B:22.0 /0.0")  # MKS format
+            # Send temperature response
+            await self._send_response("T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
             await asyncio.sleep(0.1)
-            await self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")  # BTT format
         else:
             await self._send_response("ok")
 
@@ -178,7 +193,7 @@ class DualProtocolTFT:
         self.logger.info("📤 MKS Original handshake")
         
         # MKS firmware expects simple responses
-        await self._send_response("T:25.0 /0.0 B:22.0 /0.0")
+        await self._send_response("T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
         await asyncio.sleep(0.2)
         
         # Basic firmware info
@@ -250,8 +265,8 @@ class DualProtocolTFT:
         """Handle incoming commands based on firmware type"""
         self.logger.info(f"📥 TFT >> PI: '{command}'")
         
-        # Check for custom screen request (from working version)
-        if command.startswith('M999'):  # Custom command for comprehensive data request
+        # Check for custom screen request
+        if command.startswith('M999'):
             await self._send_comprehensive_data()
             return
         
@@ -261,33 +276,19 @@ class DualProtocolTFT:
             await self._send_firmware_response()
         elif 'M114' in command:
             await self._send_position_response()
-        elif 'M27' in command:   # SD card print status
+        elif 'M27' in command:
             await self._send_sd_status_response()
-        elif 'M20' in command:   # List SD card files
+        elif 'M20' in command:
             await self._send_file_list_response()
         elif 'M92' in command:
             await self._send_response("M92 X80.00 Y80.00 Z400.00 E420.00")
             if self.firmware_type == FirmwareType.BIGTREETECH:
                 await self._send_response("ok")
-        elif command.startswith('M104') or command.startswith('M109'):  # Set hotend temp
-            temp_match = re.search(r'S(\d+)', command)
-            if temp_match:
-                target_temp = float(temp_match.group(1))
-                self.current_temps['hotend_target'] = target_temp
-                self.comprehensive_data['hotend_target'] = target_temp
-                self.logger.info(f"🔥 TFT set hotend target: {target_temp}°C")
-            if self.firmware_type == FirmwareType.BIGTREETECH:
-                await self._send_response("ok")
-        elif command.startswith('M140') or command.startswith('M190'):  # Set bed temp
-            temp_match = re.search(r'S(\d+)', command)
-            if temp_match:
-                target_temp = float(temp_match.group(1))
-                self.current_temps['bed_target'] = target_temp
-                self.comprehensive_data['bed_target'] = target_temp
-                self.logger.info(f"🛏️ TFT set bed target: {target_temp}°C")
-            if self.firmware_type == FirmwareType.BIGTREETECH:
-                await self._send_response("ok")
-        elif command.startswith('G28'):   # Home command
+        elif command.startswith('M104') or command.startswith('M109'):
+            await self._handle_hotend_temp_command(command)
+        elif command.startswith('M140') or command.startswith('M190'):
+            await self._handle_bed_temp_command(command)
+        elif command.startswith('G28'):
             self.logger.info("🏠 TFT requested home")
             if self.firmware_type == FirmwareType.BIGTREETECH:
                 await self._send_response("ok")
@@ -297,16 +298,38 @@ class DualProtocolTFT:
             if self.firmware_type == FirmwareType.BIGTREETECH:
                 await self._send_response("ok")
 
+    async def _handle_hotend_temp_command(self, command: str):
+        """Handle hotend temperature setting"""
+        temp_match = re.search(r'S(\d+)', command)
+        if temp_match:
+            target_temp = float(temp_match.group(1))
+            self.current_temps['hotend_target'] = target_temp
+            self.logger.info(f"🔥 TFT set hotend target: {target_temp}°C")
+            # TODO: Send to Klipper via Moonraker
+        if self.firmware_type == FirmwareType.BIGTREETECH:
+            await self._send_response("ok")
+
+    async def _handle_bed_temp_command(self, command: str):
+        """Handle bed temperature setting"""
+        temp_match = re.search(r'S(\d+)', command)
+        if temp_match:
+            target_temp = float(temp_match.group(1))
+            self.current_temps['bed_target'] = target_temp
+            self.logger.info(f"🛏️ TFT set bed target: {target_temp}°C")
+            # TODO: Send to Klipper via Moonraker
+        if self.firmware_type == FirmwareType.BIGTREETECH:
+            await self._send_response("ok")
+
     async def _send_temperature_response(self):
         """Send temperature response in appropriate format"""
         temp = self.current_temps
         
         if self.firmware_type == FirmwareType.MKS_ORIGINAL:
-            # MKS Original: Simple format without 'ok' or '@' (but keep @:0 B@:0 for compatibility)
+            # MKS Original: Simple format
             response = (f"T:{temp['hotend_temp']:.1f} /{temp['hotend_target']:.1f} "
                        f"B:{temp['bed_temp']:.1f} /{temp['bed_target']:.1f} @:0 B@:0")
         else:
-            # BIGTREETECH: Full Marlin format
+            # BIGTREETECH: Marlin format
             response = (f"ok T:{temp['hotend_temp']:.1f} /{temp['hotend_target']:.1f} "
                        f"B:{temp['bed_temp']:.1f} /{temp['bed_target']:.1f} @:0 B@:0")
         
@@ -322,15 +345,16 @@ class DualProtocolTFT:
 
     async def _send_position_response(self):
         """Send position response"""
-        await self._send_response("X:150.00 Y:150.00 Z:10.00 E:0.00")
+        pos = self.position
+        response = f"X:{pos['x_pos']:.2f} Y:{pos['y_pos']:.2f} Z:{pos['z_pos']:.2f} E:0.00"
+        await self._send_response(response)
         if self.firmware_type == FirmwareType.BIGTREETECH:
             await self._send_response("ok")
 
     async def _send_sd_status_response(self):
-        """Send SD card status to TFT (M27 response)"""
+        """Send SD card status"""
         if self.print_stats['state'] == 'printing':
-            # Calculate bytes printed based on progress
-            total_bytes = 1000000  # Dummy value
+            total_bytes = 1000000
             printed_bytes = int(total_bytes * self.print_stats['progress'] / 100)
             response = f"SD printing byte {printed_bytes}/{total_bytes}"
         else:
@@ -338,7 +362,7 @@ class DualProtocolTFT:
         await self._send_response(response)
 
     async def _send_file_list_response(self):
-        """Send file list to TFT (M20 response)"""
+        """Send file list"""
         await self._send_response("Begin file list")
         if self.print_stats['filename']:
             await self._send_response(self.print_stats['filename'])
@@ -348,74 +372,133 @@ class DualProtocolTFT:
         await self._send_response("End file list")
 
     async def _send_comprehensive_data(self):
-        """Send comprehensive printer data for custom TFT screen (KLIP format)"""
-        data = self.comprehensive_data
-        
-        # Format time as HH:MM
-        elapsed_hours = int(data.get('print_duration', 0) // 3600)
-        elapsed_mins = int((data.get('print_duration', 0) % 3600) // 60)
+        """Send comprehensive printer data for custom TFT screen"""
+        # Format time
+        elapsed_hours = int(self.print_stats['print_time'] // 3600)
+        elapsed_mins = int((self.print_stats['print_time'] % 3600) // 60)
         elapsed_time = f"{elapsed_hours:02d}:{elapsed_mins:02d}"
         
-        remaining_hours = int(data.get('estimated_time', 0) // 3600)
-        remaining_mins = int((data.get('estimated_time', 0) % 3600) // 60)
+        remaining_hours = int(self.print_stats['remaining_time'] // 3600)
+        remaining_mins = int((self.print_stats['remaining_time'] % 3600) // 60)
         remaining_time = f"{remaining_hours:02d}:{remaining_mins:02d}"
         
-        # Clean filename (remove path and limit length)
-        filename = data.get('filename', 'No file')
+        # Clean filename
+        filename = self.print_stats['filename'] or 'No file'
         if '/' in filename:
             filename = filename.split('/')[-1]
         if len(filename) > 20:
             filename = filename[:17] + "..."
         
-        # Create comprehensive data string (KLIP format from working version)
+        # Create KLIP string
         comprehensive_string = (
             f"KLIP:"
-            f"{data.get('hotend_temp', 0):.1f}:"
-            f"{data.get('hotend_target', 0):.1f}:"
-            f"{data.get('bed_temp', 0):.1f}:"
-            f"{data.get('bed_target', 0):.1f}:"
-            f"{data.get('state', 'standby')}:"
-            f"{data.get('progress', 0):.0f}:"
-            f"{data.get('x_pos', 0):.2f}:"
-            f"{data.get('y_pos', 0):.2f}:"
-            f"{data.get('z_pos', 0):.2f}:"
+            f"{self.current_temps['hotend_temp']:.1f}:"
+            f"{self.current_temps['hotend_target']:.1f}:"
+            f"{self.current_temps['bed_temp']:.1f}:"
+            f"{self.current_temps['bed_target']:.1f}:"
+            f"{self.print_stats['state']}:"
+            f"{self.print_stats['progress']:.0f}:"
+            f"{self.position['x_pos']:.2f}:"
+            f"{self.position['y_pos']:.2f}:"
+            f"{self.position['z_pos']:.2f}:"
             f"{elapsed_time}/{remaining_time}:"
             f"{filename}:"
-            f"{data.get('print_speed', 100)}:"
-            f"{data.get('flow_rate', 100)}:"
-            f"{data.get('fan_speed', 0)}"
+            f"{self.motion_report['print_speed']}:"
+            f"{self.motion_report['flow_rate']}:"
+            f"{self.motion_report['fan_speed']}"
         )
         
         await self._send_response(comprehensive_string)
         self.logger.info("📤 Sent KLIP comprehensive data")
 
     async def _handle_action_command(self, command: str):
-        """Handle action commands (BTT firmware)"""
+        """Handle action commands"""
         if "remote pause" in command:
             self.logger.info("🎮 TFT requested pause")
+            await self._send_moonraker_command("printer/print/pause")
         elif "remote resume" in command:
             self.logger.info("🎮 TFT requested resume")
+            await self._send_moonraker_command("printer/print/resume")
         elif "remote cancel" in command:
             self.logger.info("🎮 TFT requested cancel")
+            await self._send_moonraker_command("printer/print/cancel")
+
+    async def _send_moonraker_command(self, endpoint: str):
+        """Send command to Moonraker"""
+        try:
+            url = f"http://{self.moonraker_host}:{self.moonraker_port}/{endpoint}"
+            response = requests.post(url, timeout=5)
+            if response.status_code == 200:
+                self.logger.info(f"✅ Moonraker command sent: {endpoint}")
+            else:
+                self.logger.error(f"❌ Moonraker command failed: {response.status_code}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Moonraker command: {e}")
 
     async def update_loop(self):
-        """Send periodic updates"""
+        """Update printer data from Moonraker and send to TFT"""
         while self.running:
             if self.connected and self.detection_complete:
                 try:
+                    await self._update_from_moonraker()
                     await self._send_status_updates()
                 except Exception as e:
                     self.logger.error(f"Update error: {e}")
             
-            await asyncio.sleep(3.0)  # Update every 3 seconds
+            await asyncio.sleep(2.0)  # Update every 2 seconds
+
+    async def _update_from_moonraker(self):
+        """Fetch real data from Moonraker"""
+        try:
+            # Get temperature data
+            temp_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?heater_bed&extruder"
+            response = requests.get(temp_url, timeout=3)
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get('result', {}).get('status', {})
+                
+                if 'extruder' in status:
+                    self.current_temps['hotend_temp'] = status['extruder'].get('temperature', 0.0)
+                    self.current_temps['hotend_target'] = status['extruder'].get('target', 0.0)
+                
+                if 'heater_bed' in status:
+                    self.current_temps['bed_temp'] = status['heater_bed'].get('temperature', 0.0)
+                    self.current_temps['bed_target'] = status['heater_bed'].get('target', 0.0)
+            
+            # Get print stats and position
+            stats_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?print_stats&display_status&toolhead"
+            response = requests.get(stats_url, timeout=3)
+            
+            if response.status_code == 200:
+                data = response.json()
+                status = data.get('result', {}).get('status', {})
+                
+                if 'print_stats' in status:
+                    stats = status['print_stats']
+                    self.print_stats['state'] = stats.get('state', 'standby')
+                    self.print_stats['filename'] = stats.get('filename', '')
+                    self.print_stats['print_time'] = stats.get('print_duration', 0.0)
+                
+                if 'display_status' in status:
+                    display = status['display_status']
+                    self.print_stats['progress'] = display.get('progress', 0.0) * 100
+                
+                if 'toolhead' in status:
+                    toolhead = status['toolhead']
+                    position = toolhead.get('position', [0, 0, 0, 0])
+                    self.position['x_pos'] = position[0] if len(position) > 0 else 0.0
+                    self.position['y_pos'] = position[1] if len(position) > 1 else 0.0
+                    self.position['z_pos'] = position[2] if len(position) > 2 else 0.0
+            
+        except Exception as e:
+            self.logger.debug(f"Moonraker update failed (using fallback data): {e}")
 
     async def _send_status_updates(self):
-        """Send status updates based on firmware type"""
-        # Send comprehensive data for custom screen (like working version)
+        """Send periodic status updates to TFT"""
         await self._send_comprehensive_data()
         
         if self.firmware_type == FirmwareType.BIGTREETECH:
-            # BTT firmware supports M118 notifications
             remaining_hours = int(self.print_stats['remaining_time'] // 3600)
             remaining_minutes = int((self.print_stats['remaining_time'] % 3600) // 60)
             remaining_seconds = int(self.print_stats['remaining_time'] % 60)
@@ -427,7 +510,6 @@ class DualProtocolTFT:
             await asyncio.sleep(0.1)
             await self._send_response(progress_cmd)
         
-        # Always send periodic temperatures (both firmware types need this)
         await self._send_temperature_response()
 
     async def close(self):
@@ -446,32 +528,24 @@ class DualProtocolTFT:
 
 async def main():
     """Main function"""
-    # Try to load config
-    try:
-        import config
-        serial_port = getattr(config, 'TFT32_SERIAL_PORT', '/dev/ttyS0')
-        baudrate = getattr(config, 'TFT32_BAUDRATE', 250000)
-    except ImportError:
-        serial_port = '/dev/ttyS0'
-        baudrate = 250000
+    client = DualProtocolTFT()
     
-    print("🚀 Dual Protocol TFT32 Client")
-    print("=" * 50)
-    print(f"📡 Port: {serial_port} at {baudrate} baud")
+    print("🚀 Dual Protocol TFT32 Client with Moonraker")
+    print("=" * 60)
+    print(f"📡 Port: {client.serial_port} at {client.baudrate} baud")
     print("🔍 Auto-detecting firmware type...")
+    print("🌙 Connects to Moonraker for real printer data")
     print("📱 Supports both MKS Original and BIGTREETECH firmware")
     print()
-    
-    client = DualProtocolTFT(serial_port, baudrate)
     
     try:
         if await client.connect_and_detect():
             print(f"✅ Connected! Firmware: {client.firmware_type.value}")
-            print("🎮 Try using TFT controls and check display")
+            print("📊 Fetching real data from Moonraker...")
+            print("🎮 Try using TFT controls (pause, resume, cancel)")
             print("💡 Press Ctrl+C to stop")
             print()
             
-            # Start communication and update loops
             await asyncio.gather(
                 client.communication_loop(),
                 client.update_loop()
