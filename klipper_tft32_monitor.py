@@ -31,6 +31,7 @@ class KlipperTFT32Monitor:
         # Data storage
         self.last_temperatures = {}
         self.last_print_stats = {}
+        self.last_comprehensive_data = {}
         self.connection_status = False
         
         # Setup signal handlers for graceful shutdown
@@ -96,11 +97,19 @@ class KlipperTFT32Monitor:
             self.connection_status = self.moonraker.is_connected()
             
             if self.connection_status:
-                # Get temperatures
+                # Get comprehensive data for custom TFT screen
+                comprehensive_data = self.moonraker.get_comprehensive_status()
+                if comprehensive_data:
+                    self.last_comprehensive_data = comprehensive_data
+                    # Send comprehensive data to TFT32
+                    if self.tft32 and self.tft32.is_connected():
+                        self.tft32.update_comprehensive_data(comprehensive_data)
+                
+                # Still get individual data for backward compatibility
                 temps = self.moonraker.get_temperatures()
                 if temps:
                     self.last_temperatures = temps
-                    # Send to TFT32
+                    # Send to TFT32 (this will be handled by comprehensive data now)
                     if self.tft32 and self.tft32.is_connected():
                         self.tft32.update_temperatures(temps)
                 
@@ -108,7 +117,7 @@ class KlipperTFT32Monitor:
                 stats = self.moonraker.get_print_stats()
                 if stats:
                     self.last_print_stats = stats
-                    # Send to TFT32
+                    # Send to TFT32 (this will be handled by comprehensive data now)
                     if self.tft32 and self.tft32.is_connected():
                         self.tft32.update_print_status(stats)
             
@@ -119,6 +128,7 @@ class KlipperTFT32Monitor:
     def main_loop(self):
         """Main monitoring loop"""
         self.logger.info("Starting main monitoring loop")
+        self.logger.info("Enhanced comprehensive data collection enabled")
         
         last_update = 0
         last_connection_check = 0
@@ -136,6 +146,13 @@ class KlipperTFT32Monitor:
                 if current_time - last_update >= config.UPDATE_INTERVAL:
                     self.update_data()
                     last_update = current_time
+                    
+                    # Log comprehensive data status
+                    if self.last_comprehensive_data:
+                        self.logger.debug(f"Comprehensive data: State={self.last_comprehensive_data.get('state')}, "
+                                        f"Progress={self.last_comprehensive_data.get('progress', 0):.1f}%, "
+                                        f"Hotend={self.last_comprehensive_data.get('hotend_temp', 0):.1f}°C, "
+                                        f"Bed={self.last_comprehensive_data.get('bed_temp', 0):.1f}°C")
                 
                 # Small sleep to prevent excessive CPU usage
                 time.sleep(0.1)
