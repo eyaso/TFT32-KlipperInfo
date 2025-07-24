@@ -1,246 +1,212 @@
-# Klipper MKS TFT32 Display Monitor
+# 🖥️ **Klipper TFT32 Display Monitor**
 
-This project connects an MKS TFT32 display to your Raspberry Pi running Klipper/Moonraker via serial communication to show real-time printer information including temperatures, print status, and progress. **No firmware flashing required** - works with existing MKS TFT32 firmware!
+Connect your **MKS TFT32** display to a **Raspberry Pi** running **Klipper/Moonraker** to display real-time printer information.
 
-## Features
+**✅ What this does:**
+- Shows **real-time temperatures** (hotend, bed)
+- Displays **print status** and progress
+- Works with **existing TFT firmware** (no flashing required)
+- **Fixes "no printer attached"** connection issue
+- Uses **standard G-code protocol** for maximum compatibility
 
-- Real-time bed and hotend temperature display
-- Print status and progress monitoring
-- Connection status indicator
-- Color-coded temperature warnings
-- Progress bar for active prints
-- Automatic reconnection handling
-- Clean error messages
+---
 
-## Hardware Requirements
+## 🚀 **Super Simple Setup**
 
-- Raspberry Pi 3/4 with Klipper and Moonraker installed
-- MKS TFT32 display (any version with existing firmware)
-- Connecting wires for serial (UART) communication
-
-## How It Works
-
-This solution uses **serial communication** to send printer data to your MKS TFT32. The Python application:
-1. Fetches data from Klipper via Moonraker API
-2. Formats the data as standard G-code responses (like M105 temperature reports)  
-3. Sends these responses to your TFT32 via serial
-4. Your TFT32 displays the information using its existing interface
-
-**No firmware flashing needed!** Your TFT32 thinks it's talking to a printer mainboard.
-
-## Wiring Diagram
-
-Connect your MKS TFT32 to the Raspberry Pi as follows:
-
-| MKS TFT32 Pin | Raspberry Pi Pin | GPIO | Description |
-|---------------|------------------|------|-------------|
-| VCC (5V)      | Pin 2            | 5V   | Power       |
-| GND           | Pin 6            | GND  | Ground      |
-| TX            | Pin 10           | GPIO15 (RxD) | TFT transmit to Pi receive |
-| RX            | Pin 8            | GPIO14 (TxD) | TFT receive from Pi transmit |
-
-**Note:** Some TFT32 versions may have different pin labels (like UART_TX/UART_RX). Use the UART/serial pins, not the ones for connecting to printer mainboard.
-
-## Installation
-
-### 1. Install System Dependencies
-
+### **1. Install Everything**
 ```bash
-sudo apt update
-sudo apt install python3-pip python3-dev
-```
-
-### 2. Enable Serial Interface
-
-```bash
-sudo raspi-config
-```
-
-- Navigate to "Interfacing Options" → "Serial Port"
-- "Would you like a login shell to be accessible over serial?" → **No**
-- "Would you like the serial port hardware to be enabled?" → **Yes**
-- Reboot your Pi: `sudo reboot`
-
-### 3. Install Python Dependencies
-
-```bash
-cd /home/pi  # or your preferred directory
-git clone <this-repository>  # or download the files
+git clone https://github.com/your-repo/TFT32-KlipperInfo.git
 cd TFT32-KlipperInfo
+chmod +x install.sh
+./install.sh
 ```
 
-**Option A: Use the automated installer (recommended):**
+### **2. Start the Monitor**
 ```bash
-chmod +x install.sh  # Make the script executable
-./install.sh         # Run the installer
+chmod +x start.sh
+./start.sh
 ```
 
-**Option B: Manual installation if you get "externally-managed-environment" error:**
+**That's it!** Your TFT should now show "Connected" instead of "no printer attached" and display real-time data.
 
-Method 1 - System packages (preferred):
+---
+
+## 🔌 **Wiring**
+
+Connect TFT32 to Raspberry Pi:
+
+| **TFT32 Pin** | **Raspberry Pi Pin** | **Description** |
+|---------------|---------------------|-----------------|
+| **VCC**       | 5V (Pin 2 or 4)    | Power          |
+| **GND**       | GND (Pin 6)         | Ground         |
+| **TX**        | GPIO 15 (Pin 10)    | TFT → Pi       |
+| **RX**        | GPIO 14 (Pin 8)     | Pi → TFT       |
+
+---
+
+## 📋 **Usage**
+
+### **Start Options:**
 ```bash
-sudo apt install python3-requests python3-serial python3-websockets
+# Simple start
+./start.sh
+
+# Test connection first
+./start.sh --test-connection
+
+# Only test connection
+./start.sh --connection-only
+
+# Get help
+./start.sh --help
 ```
 
-Method 2 - Virtual environment:
+### **Service Management:**
 ```bash
-sudo apt install python3-venv python3-full
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Auto-start on boot
+sudo systemctl start klipper-tft32.service
+
+# Check status
+sudo systemctl status klipper-tft32.service
+
+# View logs
+journalctl -u klipper-tft32.service -f
+
+# Stop service
+sudo systemctl stop klipper-tft32.service
 ```
 
-Method 3 - Override system protection (not recommended):
-```bash
-pip3 install -r requirements.txt --break-system-packages
-```
+---
 
-### 4. Configure Your Setup
+## 🔧 **Configuration**
 
-Edit `config.py` to match your setup:
+Edit `config.py` to adjust settings:
 
 ```python
-# If running on a different machine than Klipper
-MOONRAKER_HOST = "192.168.8.203"  # Your Pi's IP address
+# Moonraker connection
+MOONRAKER_HOST = "localhost"
+MOONRAKER_PORT = 7125
 
-# Adjust display rotation if needed
-DISPLAY_ROTATION = 90  # 0, 90, 180, or 270
+# TFT32 serial connection
+TFT32_SERIAL_PORT = "/dev/ttyS0"
+TFT32_BAUDRATE = 115200
 
-# Modify GPIO pins if your wiring is different
-DISPLAY_PINS = {
-    'cs': 'CE0',     # Chip Select
-    'dc': 'D25',     # Data/Command  
-    'rst': None      # Reset pin (None if not connected)
-}
+# Logging
+LOG_LEVEL = "INFO"
+LOG_FILE = "klipper_tft32.log"
 ```
 
-### 5. Test the Installation
+---
 
-**If you used system packages or the installer:**
+## 🛠️ **Troubleshooting**
+
+### **"No printer attached" on TFT:**
 ```bash
-python3 klipper_tft32_monitor.py
+# Run connection helper
+python3 tft32_connection_helper.py
 ```
 
-**If you used a virtual environment:**
+### **Serial port issues:**
 ```bash
-source venv/bin/activate
-python3 klipper_tft32_monitor.py
+# Enable serial hardware
+sudo raspi-config
+# → Interface Options → Serial Port
+# → No to login shell, Yes to hardware
+
+# Check serial ports
+ls -la /dev/ttyS* /dev/ttyAMA*
+
+# Test loopback (connect TX to RX)
+echo "test" > /dev/ttyS0
+cat /dev/ttyS0
 ```
-*or directly:*
+
+### **Permission errors:**
 ```bash
-./venv/bin/python3 klipper_tft32_monitor.py
+# Add user to dialout group
+sudo usermod -a -G dialout $USER
+
+# Reboot to apply changes
+sudo reboot
 ```
 
-If everything is working correctly, you should see:
-- Console output showing Moonraker and TFT32 connection status
-- Your TFT32 displaying current printer data (temperatures, status, etc.)
-
-Press `Ctrl+C` to stop the test.
-
-## Auto-Start on Boot
-
-To automatically start the monitor when your Pi boots:
-
-### 1. Create a systemd service
-
+### **Moonraker connection:**
 ```bash
-sudo nano /etc/systemd/system/klipper-display.service
+# Test Moonraker API
+curl http://localhost:7125/server/info
+
+# Add to moonraker.conf if needed:
+[authorization]
+trusted_clients:
+    127.0.0.1
+    localhost
 ```
 
-Add the following content:
+---
 
-```ini
-[Unit]
-Description=Klipper TFT32 Display Monitor
-After=network.target moonraker.service
-Wants=moonraker.service
+## 📚 **Advanced Documentation**
 
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/TFT32-KlipperInfo
-ExecStart=/usr/bin/python3 klipper_tft32_monitor.py
-Restart=always
-RestartSec=5
+- **`TFT_CONNECTION_FIX.md`** - Details about the connection detection fix
+- **`README_STANDARD.md`** - Complete technical documentation  
+- **`STANDARD_GCODE_MIGRATION.md`** - G-code protocol information
 
-[Install]
-WantedBy=multi-user.target
-```
+---
 
-### 2. Enable and start the service
+## ✨ **Features**
 
+### **Current Features:**
+- ✅ **Real-time temperature display**
+- ✅ **Print status monitoring** 
+- ✅ **Connection status** (no more "no printer attached")
+- ✅ **Standard G-code compatibility**
+- ✅ **Auto-start service**
+- ✅ **Easy installation**
+
+### **Future Features:**
+- 🔄 **Printer control** (heat, move, etc.)
+- 🔄 **File management** 
+- 🔄 **Print job control**
+- 🔄 **Custom TFT firmware** (optional)
+
+---
+
+## 🎯 **What's Special**
+
+This solution is **unique** because:
+
+1. **No TFT firmware flashing required** - Works with existing firmware
+2. **Fixes connection detection** - Uses proper `@:` prefix format
+3. **Standard G-code protocol** - Maximum compatibility
+4. **Simple installation** - One script installs everything
+5. **Production ready** - Includes systemd service, logging, error handling
+
+---
+
+## 🆘 **Support**
+
+**Quick Help:**
 ```bash
-sudo systemctl enable klipper-display.service
-sudo systemctl start klipper-display.service
+./start.sh --help                    # Startup options
+python3 tft32_connection_helper.py   # Fix connection issues
+journalctl -u klipper-tft32.service  # Check logs
 ```
 
-### 3. Check service status
+**Common Issues:**
+- **"No printer attached"** → Run `tft32_connection_helper.py`
+- **Permission denied** → Reboot after running `install.sh`
+- **Can't connect to Moonraker** → Check Klipper/Moonraker is running
+- **Serial port not found** → Enable serial in `raspi-config`
 
-```bash
-sudo systemctl status klipper-display.service
-```
+---
 
-## Troubleshooting
+## 🏆 **Success!**
 
-### Display Not Working
+When working correctly, you should see:
+- **TFT Status:** "Connected" (not "no printer attached")
+- **Temperature Display:** Real-time hotend/bed temperatures
+- **Print Information:** Status, progress, time remaining
+- **Responsive Interface:** Touch controls work normally
 
-1. **Check wiring connections** - Ensure all pins are connected correctly
-2. **Verify SPI is enabled** - Run `lsmod | grep spi` to confirm SPI modules are loaded
-3. **Check permissions** - Make sure your user is in the `spi` group: `sudo usermod -a -G spi pi`
-4. **Test SPI communication** - Install `spi-tools`: `sudo apt install spi-tools` and test with `spi-config`
+📚 **Need Help?** See `TROUBLESHOOTING.md` for common issues and solutions.
 
-### Moonraker Connection Issues
-
-1. **Check Moonraker is running** - `sudo systemctl status moonraker`
-2. **Verify the correct IP/port** - Test with `curl http://localhost:7125/server/info`
-3. **Check firewall settings** - Ensure port 7125 is accessible
-4. **Review Moonraker logs** - `journalctl -u moonraker -f`
-
-### Common Error Messages
-
-- **"Cannot connect to Moonraker"** - Check network connection and Moonraker status
-- **"Failed to initialize display"** - Verify wiring and SPI configuration
-- **"Permission denied"** - Add user to appropriate groups: `sudo usermod -a -G spi,gpio pi`
-
-### Display is Rotated Wrong
-
-Edit `config.py` and change `DISPLAY_ROTATION`:
-- `0` - Normal orientation
-- `90` - Rotated 90° clockwise
-- `180` - Upside down
-- `270` - Rotated 90° counter-clockwise
-
-### Logs and Debugging
-
-- View real-time logs: `tail -f klipper_tft32.log`
-- Enable debug logging: Set `LOG_LEVEL = "DEBUG"` in `config.py`
-- Service logs: `journalctl -u klipper-display.service -f`
-
-## Customization
-
-### Adding New Information
-
-You can extend the functionality by modifying the code:
-
-1. Add new G-code response handlers in `tft32_serial_client.py`
-2. Update the main monitoring loop in `klipper_tft32_monitor.py`
-3. Add corresponding API calls in `moonraker_client.py`
-
-### Changing Response Format
-
-Edit the response methods in `TFT32SerialClient` to customize what data is sent to your TFT32.
-
-### Different TFT Models
-
-For other MKS TFT displays:
-1. Update serial port and baudrate in `config.py`
-2. Adjust command handling if your TFT uses different G-code commands
-3. Test and modify response formats as needed
-
-## Contributing
-
-Feel free to submit issues, feature requests, or pull requests to improve this project.
-
-## License
-
-This project is open source. Use and modify as needed for your 3D printing setup. 
+**🎉 Enjoy your connected TFT32 display!** 

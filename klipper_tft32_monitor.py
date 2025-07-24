@@ -1,59 +1,56 @@
 #!/usr/bin/env python3
 """
-Klipper TFT32 Monitor using Serial Communication
-Connects to Moonraker API and sends data to MKS TFT32 via serial
+Klipper TFT32 Standard Monitor
+Uses built-in BIGTREETECH firmware G-code protocol for maximum compatibility
 """
 
 import time
 import logging
 import signal
 import sys
-from threading import Event
-import atexit
-
-from moonraker_client import MoonrakerClient
-from tft32_serial_client import TFT32SerialClient
+from typing import Optional
 import config
+from moonraker_client import MoonrakerClient
+from tft32_gcode_client import TFT32StandardClient
 
-class KlipperTFT32Monitor:
-    """Main application class for the Klipper TFT32 monitor"""
+class KlipperTFT32StandardMonitor:
+    """Main monitor that coordinates Moonraker data with TFT32 using standard G-codes"""
     
     def __init__(self):
-        self.setup_logging()
-        self.logger = logging.getLogger(__name__)
-        
-        # Initialize components
-        self.moonraker = None
-        self.tft32 = None
-        self.running = Event()
-        self.running.set()
-        
-        # Data storage
-        self.last_temperatures = {}
-        self.last_print_stats = {}
-        self.last_comprehensive_data = {}
-        self.connection_status = False
-        
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        atexit.register(self.cleanup)
-        
-        self.logger.info("Klipper TFT32 Monitor starting...")
-    
-    def setup_logging(self):
-        """Configure logging"""
+        # Setup logging
         logging.basicConfig(
-            level=getattr(logging, config.LOG_LEVEL),
+            level=getattr(logging, config.LOG_LEVEL.upper()),
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(config.LOG_FILE),
-                logging.StreamHandler(sys.stdout)
+                logging.StreamHandler()
             ]
         )
+        self.logger = logging.getLogger(__name__)
+        
+        # Components
+        self.moonraker: Optional[MoonrakerClient] = None
+        self.tft32: Optional[TFT32StandardClient] = None
+        self.running = False
+        
+        # Status tracking
+        self.connection_status = False
+        self.last_temperatures = {}
+        self.last_print_stats = {}
+        self.last_position = {}
+        
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
     
-    def initialize_components(self):
-        """Initialize Moonraker client and TFT32 serial connection"""
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        self.logger.info(f"Received signal {signum}, shutting down...")
+        self.shutdown()
+        sys.exit(0)
+    
+    def initialize(self) -> bool:
+        """Initialize all components"""
         try:
             # Initialize Moonraker client
             self.logger.info(f"Connecting to Moonraker at {config.MOONRAKER_HOST}:{config.MOONRAKER_PORT}")
@@ -62,15 +59,14 @@ class KlipperTFT32Monitor:
                 port=config.MOONRAKER_PORT
             )
             
-            # Test connection
-            if not self.moonraker.is_connected():
+            if not self.moonraker.connect():
                 raise ConnectionError("Cannot connect to Moonraker")
             
             self.logger.info("Moonraker connection established")
             
-            # Initialize TFT32 serial connection
+            # Initialize TFT32 standard G-code client
             self.logger.info(f"Connecting to TFT32 on {config.TFT32_SERIAL_PORT}")
-            self.tft32 = TFT32SerialClient(
+            self.tft32 = TFT32StandardClient(
                 port=config.TFT32_SERIAL_PORT,
                 baudrate=config.TFT32_BAUDRATE
             )
@@ -91,25 +87,17 @@ class KlipperTFT32Monitor:
             return False
     
     def update_data(self):
-        """Update printer data from Moonraker and send to TFT32"""
+        """Update printer data from Moonraker and send to TFT32 using standard G-codes"""
         try:
             # Check connection
             self.connection_status = self.moonraker.is_connected()
             
             if self.connection_status:
-                # Get comprehensive data for custom TFT screen
-                comprehensive_data = self.moonraker.get_comprehensive_status()
-                if comprehensive_data:
-                    self.last_comprehensive_data = comprehensive_data
-                    # Send comprehensive data to TFT32
-                    if self.tft32 and self.tft32.is_connected():
-                        self.tft32.update_comprehensive_data(comprehensive_data)
-                
-                # Still get individual data for backward compatibility
+                # Get temperatures
                 temps = self.moonraker.get_temperatures()
                 if temps:
                     self.last_temperatures = temps
-                    # Send to TFT32 (this will be handled by comprehensive data now)
+                    # Send to TFT32 using standard format
                     if self.tft32 and self.tft32.is_connected():
                         self.tft32.update_temperatures(temps)
                 
@@ -117,94 +105,120 @@ class KlipperTFT32Monitor:
                 stats = self.moonraker.get_print_stats()
                 if stats:
                     self.last_print_stats = stats
-                    # Send to TFT32 (this will be handled by comprehensive data now)
+                    # Convert to standard format and send to TFT32
                     if self.tft32 and self.tft32.is_connected():
-                        self.tft32.update_print_status(stats)
-            
+                        standard_status = self._convert_print_stats(stats)
+                        self.tft32.update_print_status(standard_status)
+                
+                # Get position data
+                position = self.moonraker.get_position()
+                if position:
+                    self.last_position = position
+                    # Position is handled automatically by M114 requests from TFT
+                
+            else:
+                self.logger.warning("Moonraker connection lost, attempting to reconnect...")
+                self.moonraker.connect()
+                
         except Exception as e:
             self.logger.error(f"Error updating data: {e}")
-            self.connection_status = False
     
-    def main_loop(self):
+    def _convert_print_stats(self, moonraker_stats: dict) -> dict:
+        """Convert Moonraker print stats to standard format for TFT32"""
+        # Map Moonraker states to standard states
+        state_mapping = {
+            'standby': 'standby',
+            'printing': 'printing', 
+            'paused': 'paused',
+            'complete': 'standby',
+            'cancelled': 'cancelled',
+            'error': 'standby'
+        }
+        
+        moonraker_state = moonraker_stats.get('state', 'standby')
+        standard_state = state_mapping.get(moonraker_state, 'standby')
+        
+        # Calculate progress percentage
+        progress = 0.0
+        if 'print_stats' in moonraker_stats:
+            stats = moonraker_stats['print_stats']
+            total_duration = stats.get('total_duration', 0)
+            print_duration = stats.get('print_duration', 0)
+            if total_duration > 0:
+                progress = (print_duration / total_duration) * 100
+        
+        # Extract filename
+        filename = moonraker_stats.get('filename', '')
+        if filename.startswith('gcodes/'):
+            filename = filename[7:]  # Remove 'gcodes/' prefix
+        
+        # Calculate remaining time
+        remaining_time = 0
+        if 'print_stats' in moonraker_stats:
+            stats = moonraker_stats['print_stats']
+            total_duration = stats.get('total_duration', 0)
+            print_duration = stats.get('print_duration', 0)
+            if total_duration > print_duration:
+                remaining_time = int(total_duration - print_duration)
+        
+        # Get layer information if available
+        current_layer = moonraker_stats.get('current_layer', 0)
+        total_layers = moonraker_stats.get('total_layers', 0)
+        
+        return {
+            'state': standard_state,
+            'progress': progress,
+            'filename': filename,
+            'print_time': moonraker_stats.get('print_duration', 0),
+            'remaining_time': remaining_time,
+            'current_layer': current_layer,
+            'total_layers': total_layers
+        }
+    
+    def run(self):
         """Main monitoring loop"""
+        if not self.initialize():
+            self.logger.error("Failed to initialize, exiting")
+            return
+        
+        self.running = True
         self.logger.info("Starting main monitoring loop")
-        self.logger.info("Enhanced comprehensive data collection enabled")
         
-        last_update = 0
-        last_connection_check = 0
-        
-        while self.running.is_set():
-            try:
-                current_time = time.time()
+        try:
+            while self.running:
+                self.update_data()
+                time.sleep(config.UPDATE_INTERVAL)
                 
-                # Update connection status periodically
-                if current_time - last_connection_check >= config.CONNECTION_CHECK_INTERVAL:
-                    self.connection_status = self.moonraker.is_connected() if self.moonraker else False
-                    last_connection_check = current_time
-                
-                # Update data
-                if current_time - last_update >= config.UPDATE_INTERVAL:
-                    self.update_data()
-                    last_update = current_time
-                    
-                    # Log comprehensive data status
-                    if self.last_comprehensive_data:
-                        self.logger.debug(f"Comprehensive data: State={self.last_comprehensive_data.get('state')}, "
-                                        f"Progress={self.last_comprehensive_data.get('progress', 0):.1f}%, "
-                                        f"Hotend={self.last_comprehensive_data.get('hotend_temp', 0):.1f}°C, "
-                                        f"Bed={self.last_comprehensive_data.get('bed_temp', 0):.1f}°C")
-                
-                # Small sleep to prevent excessive CPU usage
-                time.sleep(0.1)
-                
-            except KeyboardInterrupt:
-                self.logger.info("Received keyboard interrupt")
-                break
-            except Exception as e:
-                self.logger.error(f"Error in main loop: {e}")
-                time.sleep(1)  # Wait before retrying
+        except KeyboardInterrupt:
+            self.logger.info("Interrupted by user")
+        except Exception as e:
+            self.logger.error(f"Unexpected error in main loop: {e}")
+        finally:
+            self.shutdown()
     
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        self.logger.info(f"Received signal {signum}, shutting down...")
-        self.running.clear()
-    
-    def cleanup(self):
-        """Clean up resources"""
+    def shutdown(self):
+        """Clean shutdown"""
         self.logger.info("Cleaning up...")
-        self.running.clear()
+        self.running = False
         
         if self.tft32:
             try:
                 self.tft32.disconnect()
             except Exception as e:
-                self.logger.error(f"Error during TFT32 cleanup: {e}")
+                self.logger.error(f"Error disconnecting TFT32: {e}")
+        
+        if self.moonraker:
+            try:
+                self.moonraker.disconnect()
+            except Exception as e:
+                self.logger.error(f"Error disconnecting Moonraker: {e}")
         
         self.logger.info("Cleanup complete")
-    
-    def run(self):
-        """Run the monitor application"""
-        try:
-            if not self.initialize_components():
-                self.logger.error("Failed to initialize, exiting")
-                return 1
-            
-            # Start main loop
-            self.main_loop()
-            
-        except Exception as e:
-            self.logger.error(f"Fatal error: {e}")
-            return 1
-        finally:
-            self.cleanup()
-        
-        return 0
 
 def main():
-    """Entry point"""
-    monitor = KlipperTFT32Monitor()
-    exit_code = monitor.run()
-    sys.exit(exit_code)
+    """Main entry point"""
+    monitor = KlipperTFT32StandardMonitor()
+    monitor.run()
 
 if __name__ == "__main__":
     main() 

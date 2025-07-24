@@ -159,28 +159,64 @@ class MoonrakerClient:
         return temperatures
     
     def get_print_stats(self) -> Dict[str, Any]:
-        """Get current print statistics"""
+        """Get comprehensive print statistics for standard G-code protocol"""
         status = self.get_printer_status()
         stats = {
             'state': 'standby',
             'filename': '',
             'print_duration': 0.0,
-            'progress': 0.0
+            'total_duration': 0.0,
+            'progress': 0.0,
+            'current_layer': 0,
+            'total_layers': 0,
+            'position': [0, 0, 0, 0],
+            'speed_factor': 100,
+            'extrude_factor': 100,
+            'fan_speed': 0
         }
         
         if status and 'result' in status and 'status' in status['result']:
             status_data = status['result']['status']
             
+            # Print statistics
             if 'print_stats' in status_data:
                 print_data = status_data['print_stats']
                 stats['state'] = print_data.get('state', 'standby')
                 stats['filename'] = print_data.get('filename', '')
                 stats['print_duration'] = print_data.get('print_duration', 0.0)
+                stats['total_duration'] = print_data.get('total_duration', 0.0)
             
-            # Calculate progress if available
+            # Progress from display status
             if 'display_status' in status_data:
                 display_data = status_data['display_status']
                 stats['progress'] = display_data.get('progress', 0.0) * 100
+            
+            # Virtual SD card progress (alternative/more accurate)
+            if 'virtual_sdcard' in status_data:
+                vsd_data = status_data['virtual_sdcard']
+                if vsd_data.get('progress', 0) > 0:
+                    stats['progress'] = vsd_data.get('progress', 0.0) * 100
+            
+            # Position and speed data
+            if 'gcode_move' in status_data:
+                gcode_data = status_data['gcode_move']
+                stats['position'] = gcode_data.get('gcode_position', [0, 0, 0, 0])
+                stats['speed_factor'] = int(gcode_data.get('speed_factor', 1.0) * 100)
+                stats['extrude_factor'] = int(gcode_data.get('extrude_factor', 1.0) * 100)
+            
+            # Fan speed
+            if 'fan' in status_data:
+                fan_data = status_data['fan']
+                stats['fan_speed'] = int(fan_data.get('speed', 0.0) * 100)
+            
+            # Layer information (if available from plugins)
+            if 'print_stats' in status_data:
+                print_data = status_data['print_stats']
+                # Some plugins provide layer information
+                if 'info' in print_data:
+                    info = print_data['info']
+                    stats['current_layer'] = info.get('current_layer', 0)
+                    stats['total_layers'] = info.get('total_layer', 0)
         
         return stats
     
