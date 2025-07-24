@@ -220,14 +220,6 @@ class MoonrakerClient:
         
         return stats
     
-    def is_connected(self) -> bool:
-        """Check if connection to Moonraker is working"""
-        try:
-            response = self.session.get(f"{self.base_url}/server/info", timeout=5)
-            return response.status_code == 200
-        except:
-            return False
-    
     async def connect_websocket(self, callback=None):
         """Connect to Moonraker websocket for real-time updates"""
         try:
@@ -258,4 +250,50 @@ class MoonrakerClient:
                         callback(data)
                         
         except Exception as e:
-            self.logger.error(f"WebSocket connection failed: {e}") 
+            self.logger.error(f"WebSocket connection failed: {e}")
+    
+    def connect(self) -> bool:
+        """Test connection to Moonraker"""
+        try:
+            response = self.session.get(f"{self.base_url}/server/info", timeout=5)
+            response.raise_for_status()
+            self.logger.info("Successfully connected to Moonraker")
+            return True
+        except requests.RequestException as e:
+            self.logger.error(f"Failed to connect to Moonraker: {e}")
+            return False
+    
+    def is_connected(self) -> bool:
+        """Check if Moonraker is accessible"""
+        try:
+            response = self.session.get(f"{self.base_url}/server/info", timeout=3)
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+    
+    def get_position(self) -> Dict[str, float]:
+        """Get current position information"""
+        try:
+            status = self.get_printer_status()
+            if status and 'result' in status and 'status' in status['result']:
+                toolhead = status['result']['status'].get('toolhead', {})
+                position = toolhead.get('position', [0, 0, 0, 0])
+                return {
+                    'x': float(position[0]) if len(position) > 0 else 0.0,
+                    'y': float(position[1]) if len(position) > 1 else 0.0,
+                    'z': float(position[2]) if len(position) > 2 else 0.0,
+                    'e': float(position[3]) if len(position) > 3 else 0.0
+                }
+        except Exception as e:
+            self.logger.error(f"Failed to get position: {e}")
+        
+        return {'x': 0.0, 'y': 0.0, 'z': 0.0, 'e': 0.0}
+    
+    def disconnect(self):
+        """Clean disconnect from Moonraker"""
+        try:
+            if self.session:
+                self.session.close()
+                self.logger.info("Disconnected from Moonraker")
+        except Exception as e:
+            self.logger.error(f"Error during Moonraker disconnect: {e}") 
