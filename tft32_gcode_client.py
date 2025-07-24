@@ -102,13 +102,20 @@ class TFT32StandardClient:
                 
                 # Handle incoming data from TFT
                 if self.serial_conn.in_waiting > 0:
-                    line = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
-                    if line:
-                        if not first_command_received:
-                            self.logger.info("🎉 TFT HAS STARTED COMMUNICATING! Connection established.")
-                            first_command_received = True
-                        self.logger.info(f"📥 TFT >> PI: '{line}'")  # Show received messages
-                        self._handle_tft_command(line)
+                    try:
+                        line = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
+                        if line:
+                            if not first_command_received:
+                                self.logger.info("🎉 TFT HAS STARTED COMMUNICATING! Connection established.")
+                                first_command_received = True
+                            self.logger.info(f"📥 TFT >> PI: '{line}'")  # Show received messages
+                            self._handle_tft_command(line)
+                    except (serial.SerialException, OSError) as e:
+                        self.logger.error(f"Serial read error: {e}")
+                        # Try to reconnect
+                        if not self._reconnect_serial():
+                            break
+                        continue
                 
                 # Send periodic temperature updates (M105 response format)
                 if current_time - last_temp_send >= temp_send_interval:
@@ -146,6 +153,9 @@ class TFT32StandardClient:
         elif command.startswith('M115'):  # Get firmware info
             self.logger.info("🔧 TFT requesting firmware info")
             self._send_firmware_response()
+        elif command.startswith('M92'):   # Steps per mm (RepRap Firmware detection)
+            self.logger.info("📏 TFT requesting steps per mm (RRF detection)")
+            self._send_response("M92 X80.00 Y80.00 Z400.00 E420.00\r\n")
         elif command.startswith('G28'):   # Home command
             self.logger.info("🏠 TFT requesting home - forwarding to Klipper")
             # TODO: Future enhancement - forward to Klipper for actual homing
@@ -170,30 +180,36 @@ class TFT32StandardClient:
             self._send_ok_response()
     
     def _send_temperature_response(self):
-        """Send temperature data in standard M105 response format"""
-        # BIGTREETECH firmware expects "ok" prefix for M105 responses
-        response = (f"ok T:{self.current_temps['hotend_temp']:.1f} /"
+        """Send temperature data in RepRap Firmware format"""
+        # RepRap Firmware format: NO @ symbol (firmware detects RRF by absence of @)
+        # From Mainboard_AckHandler.c line 409: if (!ack_seen("@"))  // it's RepRapFirmware
+        response = (f"T:{self.current_temps['hotend_temp']:.1f} /"
                     f"{self.current_temps['hotend_target']:.1f} "
                     f"B:{self.current_temps['bed_temp']:.1f} /"
-                    f"{self.current_temps['bed_target']:.1f} @:0 B@:0\r\n")
+                    f"{self.current_temps['bed_target']:.1f}\r\n")
         self._send_response(response)
     
     def _send_initial_handshake(self):
-        """Send initial sequence to establish TFT connection"""
-        self.logger.info("🤝 Sending initial handshake to TFT...")
+        """Send initial sequence for RepRap Firmware connection based on firmware analysis"""
+        self.logger.info("🤝 Sending RepRap Firmware protocol handshake...")
         
-        # Send initial temperature response to trigger connection detection
-        self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
+        # CRITICAL: For RepRap Firmware, temperature response should NOT contain @
+        # From Mainboard_AckHandler.c line 409: if (!ack_seen("@"))  // it's RepRapFirmware
+        self._send_response("T:25.0 /0.0 B:22.0 /0.0\r\n")
+        time.sleep(0.3)
+        
+        # Send RepRap firmware identification (M115 response format)
+        self._send_response("FIRMWARE_NAME:RepRapFirmware for Duet 2 WiFi FIRMWARE_VERSION:3.4.0 ELECTRONICS:Duet WiFi 1.02 or later FIRMWARE_DATE:2021-12-25\r\n")
         time.sleep(0.2)
         
-        # Send firmware info
-        self._send_response("FIRMWARE_NAME:Klipper-TFT32-Bridge FIRMWARE_VERSION:1.0.0 MACHINE_TYPE:Klipper EXTRUDER_COUNT:1\r\n")
-        time.sleep(0.2)
+        # Send M92 response (expected by RRF detection sequence)
+        self._send_response("M92 X80.00 Y80.00 Z400.00 E420.00\r\n")
+        time.sleep(0.1)
         
-        # Send OK to indicate ready
+        # Final OK to complete handshake
         self._send_response("ok\r\n")
         
-        self.logger.info("🤝 Initial handshake sent - TFT should start responding...")
+        self.logger.info("🤝 RepRap Firmware handshake complete - connection should be established")
     
     def _send_position_response(self):
         """Send position data in standard M114 response format"""
@@ -251,11 +267,10 @@ class TFT32StandardClient:
                 self._send_response(f"M118 P0 A1 action:notification Data Left {progress_str}\r\n")
     
     def _send_firmware_response(self):
-        """Send firmware identification response for M115"""
-        response = ("FIRMWARE_NAME:Klipper-TFT32-Bridge "
-                   "FIRMWARE_VERSION:1.0.0 "
-                   "MACHINE_TYPE:Klipper "
-                   "EXTRUDER_COUNT:1\r\n")
+        """Send firmware identification response for M115 - RepRap Firmware format"""
+        # Based on Mainboard_AckHandler.c line 1267: RepRapFirmware detection
+        response = ("FIRMWARE_NAME:RepRapFirmware for Duet 2 WiFi FIRMWARE_VERSION:3.4.0 "
+                   "ELECTRONICS:Duet WiFi 1.02 or later FIRMWARE_DATE:2021-12-25\r\n")
         self._send_response(response)
     
     def _send_ok_response(self):
@@ -269,9 +284,40 @@ class TFT32StandardClient:
                 self.logger.info(f"📤 PI >> TFT: '{response.strip()}'")  # Show sent messages
                 self.serial_conn.write(response.encode('utf-8'))
                 self.serial_conn.flush()
-        except Exception as e:
+        except (serial.SerialException, OSError) as e:
             self.logger.error(f"Failed to send response: {e}")
+            self.logger.warning("Attempting to reconnect...")
+            self._reconnect_serial()
     
+    def _reconnect_serial(self) -> bool:
+        """Attempt to reconnect to TFT32"""
+        try:
+            self.logger.info("🔄 Attempting to reconnect to TFT...")
+            if self.serial_conn and self.serial_conn.is_open:
+                self.serial_conn.close()
+            
+            time.sleep(1)  # Wait before reconnecting
+            
+            self.serial_conn = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                timeout=1,
+                write_timeout=2,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE
+            )
+            
+            self.logger.info("✅ Reconnected to TFT32")
+            # Send handshake again
+            time.sleep(0.5)
+            self._send_initial_handshake()
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Reconnection failed: {e}")
+            return False
+
     def update_temperatures(self, temps: Dict[str, float]):
         """Update temperature data"""
         self.current_temps.update(temps)

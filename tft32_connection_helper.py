@@ -47,17 +47,17 @@ def establish_connection(port=None, baudrate=None, timeout=30):
         while time.time() - start_time < timeout:
             try:
                 # Send the CRITICAL temperature response that establishes connection
-                # BIGTREETECH firmware expects "ok" prefix for M105 responses
+                # RepRap Firmware format: NO @ symbol (firmware detects RRF by absence of @)
                 if response_count % 5 == 0:  # Every ~1 second  
-                    ser.write(b"ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
+                    ser.write(b"T:25.0 /0.0 B:22.0 /0.0\r\n")
                     ser.flush()
-                    print(f"🌡️ Sent connection temperature (with ok prefix)")
+                    print(f"🌡️ Sent connection temperature (RepRap format)")
                 
                 # Send firmware identification periodically
                 if response_count % 10 == 0:  # Every ~2 seconds
-                    ser.write(b"FIRMWARE_NAME:Marlin 2.0.x SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin\r\n")
+                    ser.write(b"FIRMWARE_NAME:RepRapFirmware for Duet 2 WiFi FIRMWARE_VERSION:3.4.0\r\n")
                     ser.flush()
-                    print(f"📤 Sent firmware ID")
+                    print(f"📤 Sent RepRap firmware ID")
                 
                 # Always send OK response
                 ser.write(b"ok\r\n")
@@ -71,12 +71,17 @@ def establish_connection(port=None, baudrate=None, timeout=30):
                         
                         # Respond to specific commands with proper format
                         if incoming.startswith('M105'):  # Temperature request
-                            response = b"ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n"
+                            response = b"T:25.0 /0.0 B:22.0 /0.0\r\n"
                             ser.write(response)
                             ser.flush()
                             print(f"📤 PI >> TFT: '{response.decode().strip()}'")
                         elif incoming.startswith('M115'):  # Firmware request
-                            response = b"FIRMWARE_NAME:Klipper-TFT32-Bridge FIRMWARE_VERSION:1.0.0 MACHINE_TYPE:Klipper EXTRUDER_COUNT:1\r\n"
+                            response = b"FIRMWARE_NAME:RepRapFirmware for Duet 2 WiFi FIRMWARE_VERSION:3.4.0\r\n"
+                            ser.write(response)
+                            ser.flush()
+                            print(f"📤 PI >> TFT: '{response.decode().strip()}'")
+                        elif incoming.startswith('M92'):   # Steps per mm request
+                            response = b"M92 X80.00 Y80.00 Z400.00 E420.00\r\n"
                             ser.write(response)
                             ser.flush()
                             print(f"📤 PI >> TFT: '{response.decode().strip()}'")
