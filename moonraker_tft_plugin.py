@@ -344,7 +344,7 @@ class TFT32Plugin:
         self.connected = False
 
 # Moonraker plugin interface
-def load_component(config: ConfigHelper) -> TFT32Plugin:
+def load_component(config):
     """Load component for Moonraker"""
     return TFT32Plugin(config)
 
