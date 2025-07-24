@@ -22,40 +22,24 @@ def bypass_connection():
     try:
         ser = serial.Serial(port, baudrate, timeout=1)
         print(f"✅ Connected to {port} at {baudrate} baud")
-        print("⏱️  Sending CRITICAL first response for RepRap connection...")
+        print("⏱️  Waiting for TFT to send initial M105 probe...")
+        print("   (TFT should send M105 within a few seconds of boot)")
         print()
         
-        # CRITICAL: For RepRap Firmware, temperature response should NOT contain @
-        # From line 409: if (!ack_seen("@"))  // it's RepRapFirmware
-        # This means RRF responses should NOT have @ symbol
-        
-        first_response = "T:25.0 /0.0 B:22.0 /0.0"
-        ser.write(f"{first_response}\r\n".encode())
-        ser.flush()
-        print(f"📤 CRITICAL FIRST (RRF): {first_response}")
-        print("   ^ RepRap format (NO @ symbol) should trigger connection")
-        
-        time.sleep(0.5)
-        
-        # Send RepRap firmware identification
+        # RepRap firmware identification for when requested
         firmware_response = "FIRMWARE_NAME:RepRapFirmware for Duet 2 WiFi FIRMWARE_VERSION:3.4.0 ELECTRONICS:Duet WiFi 1.02 or later FIRMWARE_DATE:2021-12-25"
-        ser.write(f"{firmware_response}\r\n".encode())
-        ser.flush()
-        print(f"📤 FIRMWARE (RRF): {firmware_response[:50]}...")
-        
-        time.sleep(0.2)
-        
-        # Send basic OK
-        ser.write(b"ok\r\n")
-        ser.flush()
-        print("📤 INITIAL: ok")
         
         print("\n🔄 Starting RepRap communication loop...")
-        print("📺 TFT should now show CONNECTED status!")
+        print("📺 Waiting for TFT to initiate connection...")
         print("🎮 Try pressing buttons on TFT...")
+        print()
+        print("⚠️  CRITICAL: Looking for TFT's INITIAL M105 probe...")
+        print("   If TFT rebooted, it should send M105 within a few seconds...")
         print()
         
         counter = 0
+        initial_probe_detected = False
+        
         while True:
             counter += 1
             
@@ -64,10 +48,30 @@ def bypass_connection():
                 incoming = ser.readline().decode('utf-8', errors='ignore').strip()
                 print(f"📥 TFT COMMAND: '{incoming}'")
                 
+                # Detect the CRITICAL initial M105 probe
+                if incoming.startswith('M105') and not initial_probe_detected:
+                    initial_probe_detected = True
+                    print("🎯 DETECTED INITIAL M105 PROBE FROM TFT!")
+                    print("🔄 This is the connection detection moment...")
+                    
+                    # Send the CRITICAL RepRap connection response
+                    # Line 389 requires: T0: or T:0 (not just T:) for RepRap firmware
+                    response = "T:0 /0.0 B:22.0 /0.0"  # T:0 format for RRF
+                    ser.write(f"{response}\r\n".encode())
+                    print(f"📤 CRITICAL CONNECTION RESPONSE: {response}")
+                    print("   ^ T:0 format required for RepRap connection detection")
+                    
+                    # Send firmware ID immediately after
+                    time.sleep(0.1)
+                    ser.write(f"{firmware_response}\r\n".encode())
+                    print(f"📤 FIRMWARE FOLLOWUP: RepRap firmware info")
+                    
+                    continue
+                
                 # Respond based on RepRap firmware format
                 if incoming.startswith('M105'):  # Temperature request
-                    # RepRap format: NO @ symbol
-                    response = "T:25.0 /0.0 B:22.0 /0.0"
+                    # RepRap format: T:0 (line 389 requirement)
+                    response = "T:0 /0.0 B:22.0 /0.0"
                     ser.write(f"{response}\r\n".encode())
                     print(f"📤 M105 RESPONSE (RRF): {response}")
                     
@@ -104,12 +108,6 @@ def bypass_connection():
                     print(f"❓ OTHER COMMAND: {incoming}")
                     ser.write(b"ok\r\n")
                     print(f"📤 RESPONSE: ok")
-            
-            # Send periodic temperature updates (every 2 seconds) - RepRap format
-            if counter % 20 == 0:  # Every 2 seconds (20 * 0.1s)
-                temp_response = "T:25.0 /0.0 B:22.0 /0.0"  # NO @ symbol for RRF
-                ser.write(f"{temp_response}\r\n".encode())
-                print(f"🔄 PERIODIC (RRF): {temp_response}")
             
             time.sleep(0.1)
             
