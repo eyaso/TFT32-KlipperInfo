@@ -270,6 +270,11 @@ class DualProtocolTFT:
             await self._send_comprehensive_data()
             return
         
+        # For BIGTREETECH firmware, send immediate "ok" first to prevent timeout
+        if self.firmware_type == FirmwareType.BIGTREETECH:
+            await self._send_response("ok")
+            await asyncio.sleep(0.01)  # Small delay to ensure ok is processed
+        
         if 'M105' in command:
             await self._send_temperature_response()
         elif 'M115' in command:
@@ -282,21 +287,14 @@ class DualProtocolTFT:
             await self._send_file_list_response()
         elif 'M92' in command:
             await self._send_response("M92 X80.00 Y80.00 Z400.00 E420.00")
-            if self.firmware_type == FirmwareType.BIGTREETECH:
-                await self._send_response("ok")
         elif command.startswith('M104') or command.startswith('M109'):
             await self._handle_hotend_temp_command(command)
         elif command.startswith('M140') or command.startswith('M190'):
             await self._handle_bed_temp_command(command)
         elif command.startswith('G28'):
             self.logger.info("🏠 TFT requested home")
-            if self.firmware_type == FirmwareType.BIGTREETECH:
-                await self._send_response("ok")
         elif 'action:' in command:
             await self._handle_action_command(command)
-        else:
-            if self.firmware_type == FirmwareType.BIGTREETECH:
-                await self._send_response("ok")
 
     async def _handle_hotend_temp_command(self, command: str):
         """Handle hotend temperature setting"""
@@ -306,8 +304,6 @@ class DualProtocolTFT:
             self.current_temps['hotend_target'] = target_temp
             self.logger.info(f"🔥 TFT set hotend target: {target_temp}°C")
             # TODO: Send to Klipper via Moonraker
-        if self.firmware_type == FirmwareType.BIGTREETECH:
-            await self._send_response("ok")
 
     async def _handle_bed_temp_command(self, command: str):
         """Handle bed temperature setting"""
@@ -317,8 +313,6 @@ class DualProtocolTFT:
             self.current_temps['bed_target'] = target_temp
             self.logger.info(f"🛏️ TFT set bed target: {target_temp}°C")
             # TODO: Send to Klipper via Moonraker
-        if self.firmware_type == FirmwareType.BIGTREETECH:
-            await self._send_response("ok")
 
     async def _send_temperature_response(self):
         """Send temperature response in appropriate format"""
@@ -341,15 +335,12 @@ class DualProtocolTFT:
             await self._send_response("FIRMWARE_NAME:MKS-TFT FIRMWARE_VERSION:2.0.6")
         else:
             await self._send_response("FIRMWARE_NAME:Klipper HOST_ACTION_COMMANDS:1 EXTRUDER_COUNT:1")
-            await self._send_response("ok")
 
     async def _send_position_response(self):
         """Send position response"""
         pos = self.position
         response = f"X:{pos['x_pos']:.2f} Y:{pos['y_pos']:.2f} Z:{pos['z_pos']:.2f} E:0.00"
         await self._send_response(response)
-        if self.firmware_type == FirmwareType.BIGTREETECH:
-            await self._send_response("ok")
 
     async def _send_sd_status_response(self):
         """Send SD card status"""
