@@ -58,7 +58,8 @@ class TFT32Final:
             'state': 'standby',
             'progress': 0.0,
             'filename': '',
-            'print_time': 0.0
+            'print_time': 0.0,
+            'remaining_time': 0
         }
         self.fan_speed = 0  # Fan speed percentage (0-100)
         
@@ -220,8 +221,14 @@ class TFT32Final:
 
     async def _handle_command(self, command: str):
         """Handle incoming commands based on firmware type"""
+        # Check for custom screen request
+        if command.startswith('M999'):
+            await self._send_comprehensive_data()
+            return
+        
         # For BIGTREETECH firmware, send immediate "ok" first to prevent timeout
-        if self.firmware_type == FirmwareType.BIGTREETECH:
+        # EXCEPT for M105 which includes "ok" in the response
+        if self.firmware_type == FirmwareType.BIGTREETECH and 'M105' not in command:
             await self._send_response("ok")
             await asyncio.sleep(0.01)  # Small delay to ensure ok is processed
         
@@ -246,6 +253,8 @@ class TFT32Final:
             await self._handle_fan_command(command)
         elif command.startswith('M107'):
             await self._handle_fan_off_command()
+        elif command.startswith('G28'):
+            pass  # Home command - just acknowledge
         elif 'action:' in command:
             await self._handle_action_command(command)
 
@@ -284,11 +293,12 @@ class TFT32Final:
         temp = self.current_temps
         
         if self.firmware_type == FirmwareType.MKS_ORIGINAL:
+            # MKS Original: Simple format
             response = (f"T:{temp['hotend_temp']:.1f} /{temp['hotend_target']:.1f} "
                        f"B:{temp['bed_temp']:.1f} /{temp['bed_target']:.1f} @:0 B@:0")
         else:
-            # For BIGTREETECH, standard format (ok already sent)
-            response = (f"T:{temp['hotend_temp']:.1f} /{temp['hotend_target']:.1f} "
+            # BIGTREETECH: Marlin format (same as working dual_protocol)
+            response = (f"ok T:{temp['hotend_temp']:.1f} /{temp['hotend_target']:.1f} "
                        f"B:{temp['bed_temp']:.1f} /{temp['bed_target']:.1f} @:0 B@:0")
         
         await self._send_response(response)
@@ -323,6 +333,43 @@ class TFT32Final:
         else:
             await self._send_response("test.gcode")
         await self._send_response("End file list")
+
+    async def _send_comprehensive_data(self):
+        """Send comprehensive printer data for custom TFT screen (KLIP format)"""
+        # Format time
+        elapsed_hours = int(self.print_stats['print_time'] // 3600)
+        elapsed_mins = int((self.print_stats['print_time'] % 3600) // 60)
+        elapsed_time = f"{elapsed_hours:02d}:{elapsed_mins:02d}"
+        
+        remaining_hours = int(self.print_stats.get('remaining_time', 0) // 3600)
+        remaining_mins = int((self.print_stats.get('remaining_time', 0) % 3600) // 60)
+        remaining_time = f"{remaining_hours:02d}:{remaining_mins:02d}"
+        
+        # Clean filename
+        filename = self.print_stats['filename'] or 'No file'
+        if '/' in filename:
+            filename = filename.split('/')[-1]
+        if len(filename) > 20:
+            filename = filename[:17] + "..."
+        
+        # Create KLIP string (same format as working dual_protocol)
+        comprehensive_string = (
+            f"KLIP:"
+            f"{self.current_temps['hotend_temp']:.1f}:"
+            f"{self.current_temps['hotend_target']:.1f}:"
+            f"{self.current_temps['bed_temp']:.1f}:"
+            f"{self.current_temps['bed_target']:.1f}:"
+            f"{self.print_stats['state']}:"
+            f"{self.print_stats['progress']:.0f}:"
+            f"{self.position['x_pos']:.2f}:"
+            f"{self.position['y_pos']:.2f}:"
+            f"{self.position['z_pos']:.2f}:"
+            f"{elapsed_time}/{remaining_time}:"
+            f"{filename}:"
+            f"{self.fan_speed}:100:0"  # fan_speed:flow_rate:extra
+        )
+        
+        await self._send_response(comprehensive_string)
 
     async def _handle_action_command(self, command: str):
         """Handle action commands"""
