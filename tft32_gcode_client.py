@@ -79,19 +79,27 @@ class TFT32StandardClient:
     
     def _communication_loop(self):
         """Main communication loop"""
+        temp_send_interval = 2.0   # Send temperature every 2 seconds
         last_temp_send = 0
-        last_status_send = 0
-        temp_send_interval = 2.0  # Send temps every 2 seconds
         status_send_interval = 1.0  # Send status every 1 second
+        last_status_send = 0
+        debug_interval = 30.0  # Debug message every 30 seconds
+        last_debug = 0
         
         while self.running:
             try:
                 current_time = time.time()
                 
+                # Debug message every 30 seconds
+                if current_time - last_debug >= debug_interval:
+                    self.logger.info(f"🔄 Communication loop active - TFT connected: {self.is_connected()}")
+                    last_debug = current_time
+                
                 # Handle incoming data from TFT
                 if self.serial_conn.in_waiting > 0:
                     line = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if line:
+                        self.logger.info(f"📥 TFT >> PI: '{line}'")  # Show received messages
                         self._handle_tft_command(line)
                 
                 # Send periodic temperature updates (M105 response format)
@@ -112,7 +120,7 @@ class TFT32StandardClient:
     
     def _handle_tft_command(self, command: str):
         """Handle commands received from TFT32"""
-        self.logger.debug(f"TFT Command: {command}")
+        # Command processing (already logged in communication loop)
         
         # Standard G-code commands that TFT sends
         if command.startswith('M105'):  # Temperature request
@@ -121,8 +129,10 @@ class TFT32StandardClient:
             self._send_position_response()
         elif command.startswith('M27'):   # SD card print status
             self._send_sd_status_response()
-        elif command.startswith('M20'):   # List SD card files
+        elif command.startswith('M20'):   # List SD files
             self._send_file_list_response()
+        elif command.startswith('M115'):  # Get firmware info
+            self._send_firmware_response()
         elif command.startswith('G28'):   # Home command
             # TODO: Future enhancement - forward to Klipper for actual homing
             self._send_ok_response()
@@ -184,23 +194,31 @@ class TFT32StandardClient:
         
         # Send progress information during printing
         if current_state == 'printing':
-            # Time remaining
+            # Time remaining (BTT TFT format: M118 P0 A1 action:notification Time Left HHhMMmSSs)
             if self.print_status['remaining_time'] > 0:
                 hours = self.print_status['remaining_time'] // 3600
                 minutes = (self.print_status['remaining_time'] % 3600) // 60
                 seconds = self.print_status['remaining_time'] % 60
                 time_str = f"{hours:02d}h{minutes:02d}m{seconds:02d}s"
-                self._send_response(f"M117 Time Left {time_str}\r\n")
+                self._send_response(f"M118 P0 A1 action:notification Time Left {time_str}\r\n")
             
-            # Layer progress
-            if self.print_status['total_layers'] > 0:
-                layer_str = f"{self.print_status['current_layer']}/{self.print_status['total_layers']}"
-                self._send_response(f"M117 Layer Left {layer_str}\r\n")
+            # Layer progress (BTT TFT format: M118 P0 A1 action:notification Layer Left XX/YY)
+            if self.print_status['total_layers'] and self.print_status['total_layers'] > 0:
+                layer_str = f"{self.print_status['current_layer'] or 0}/{self.print_status['total_layers']}"
+                self._send_response(f"M118 P0 A1 action:notification Layer Left {layer_str}\r\n")
             
-            # File progress
+            # File progress (BTT TFT format: M118 P0 A1 action:notification Data Left XX/100)
             if self.print_status['progress'] > 0:
                 progress_str = f"{int(self.print_status['progress'])}/100"
-                self._send_response(f"M117 Data Left {progress_str}\r\n")
+                self._send_response(f"M118 P0 A1 action:notification Data Left {progress_str}\r\n")
+    
+    def _send_firmware_response(self):
+        """Send firmware identification response for M115"""
+        response = ("FIRMWARE_NAME:Klipper-TFT32-Bridge "
+                   "FIRMWARE_VERSION:1.0.0 "
+                   "MACHINE_TYPE:Klipper "
+                   "EXTRUDER_COUNT:1\r\n")
+        self._send_response(response)
     
     def _send_ok_response(self):
         """Send standard OK response"""
@@ -208,13 +226,13 @@ class TFT32StandardClient:
     
     def _send_response(self, response: str):
         """Send response to TFT32"""
-        if self.serial_conn and self.serial_conn.is_open:
-            try:
+        try:
+            if self.serial_conn and self.serial_conn.is_open:
+                self.logger.info(f"📤 PI >> TFT: '{response.strip()}'")  # Show sent messages
                 self.serial_conn.write(response.encode('utf-8'))
                 self.serial_conn.flush()
-                self.logger.debug(f"Sent: {response.strip()}")
-            except Exception as e:
-                self.logger.error(f"Failed to send response: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to send response: {e}")
     
     def update_temperatures(self, temps: Dict[str, float]):
         """Update temperature data"""

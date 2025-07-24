@@ -60,21 +60,24 @@ def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
                 if ser.in_waiting > 0:
                     incoming = ser.readline().decode('utf-8', errors='ignore').strip()
                     if incoming:
-                        print(f"📥 TFT sent: {incoming}")
+                        print(f"📥 TFT >> PI: '{incoming}'")
                         
                         # Respond to specific commands with proper format
                         if incoming.startswith('M105'):  # Temperature request
-                            ser.write(b"@:0 T:25.0/0.0 B:22.0/0.0\r\n")
+                            response = b"T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n"
+                            ser.write(response)
                             ser.flush()
-                            print(f"🌡️ Responded to M105 with connection format")
+                            print(f"📤 PI >> TFT: '{response.decode().strip()}'")
                         elif incoming.startswith('M115'):  # Firmware request
-                            ser.write(b"FIRMWARE_NAME:Marlin 2.0.x SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin\r\n")
+                            response = b"FIRMWARE_NAME:Klipper-TFT32-Bridge FIRMWARE_VERSION:1.0.0 MACHINE_TYPE:Klipper EXTRUDER_COUNT:1\r\n"
+                            ser.write(response)
                             ser.flush()
-                            print(f"📋 Responded to M115 firmware request")
+                            print(f"📤 PI >> TFT: '{response.decode().strip()}'")
                         elif incoming.startswith('M114'):  # Position request
-                            ser.write(b"X:150.00 Y:150.00 Z:10.00 E:0.00\r\n")
+                            response = b"X:150.00 Y:150.00 Z:10.00 E:0.00\r\n"
+                            ser.write(response)
                             ser.flush()
-                            print(f"📍 Responded to M114 position request")
+                            print(f"📤 PI >> TFT: '{response.decode().strip()}'")
                         else:
                             # Generic OK for other commands
                             ser.write(b"ok\r\n")
