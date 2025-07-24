@@ -43,18 +43,16 @@ class TFT32StandardClient:
         self.last_print_state = 'standby'
         
     def connect(self) -> bool:
-        """Connect to TFT32 via serial"""
+        """Connect to TFT32"""
         try:
             self.serial_conn = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
+                timeout=1,
+                write_timeout=2,
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=1,
-                xonxoff=False,
-                rtscts=False,
-                dsrdtr=False
+                stopbits=serial.STOPBITS_ONE
             )
             
             self.running = True
@@ -62,8 +60,12 @@ class TFT32StandardClient:
             self.read_thread.start()
             
             self.logger.info(f"Connected to TFT32 on {self.port} at {self.baudrate} baud")
-            return True
             
+            # Send initial handshake sequence to wake up TFT
+            time.sleep(0.5)  # Let connection settle
+            self._send_initial_handshake()
+            
+            return True
         except Exception as e:
             self.logger.error(f"Failed to connect to TFT32: {e}")
             return False
@@ -85,6 +87,7 @@ class TFT32StandardClient:
         last_status_send = 0
         debug_interval = 30.0  # Debug message every 30 seconds
         last_debug = 0
+        first_command_received = False  # Track if TFT has started communicating
         
         while self.running:
             try:
@@ -92,13 +95,17 @@ class TFT32StandardClient:
                 
                 # Debug message every 30 seconds
                 if current_time - last_debug >= debug_interval:
-                    self.logger.info(f"🔄 Communication loop active - TFT connected: {self.is_connected()}")
+                    status = "🟢 ACTIVE" if first_command_received else "🟡 WAITING FOR TFT"
+                    self.logger.info(f"🔄 Communication loop active - TFT status: {status}")
                     last_debug = current_time
                 
                 # Handle incoming data from TFT
                 if self.serial_conn.in_waiting > 0:
                     line = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if line:
+                        if not first_command_received:
+                            self.logger.info("🎉 TFT HAS STARTED COMMUNICATING! Connection established.")
+                            first_command_received = True
                         self.logger.info(f"📥 TFT >> PI: '{line}'")  # Show received messages
                         self._handle_tft_command(line)
                 
@@ -124,38 +131,68 @@ class TFT32StandardClient:
         
         # Standard G-code commands that TFT sends
         if command.startswith('M105'):  # Temperature request
+            self.logger.info("🌡️ TFT requesting temperature - sending current data")
             self._send_temperature_response()
         elif command.startswith('M114'):  # Position request
+            self.logger.info("📍 TFT requesting position")
             self._send_position_response()
         elif command.startswith('M27'):   # SD card print status
+            self.logger.info("💾 TFT requesting SD status")
             self._send_sd_status_response()
         elif command.startswith('M20'):   # List SD files
+            self.logger.info("📂 TFT requesting file list")
             self._send_file_list_response()
         elif command.startswith('M115'):  # Get firmware info
+            self.logger.info("🔧 TFT requesting firmware info")
             self._send_firmware_response()
         elif command.startswith('G28'):   # Home command
+            self.logger.info("🏠 TFT requesting home - forwarding to Klipper")
             # TODO: Future enhancement - forward to Klipper for actual homing
             self._send_ok_response()
         elif command.startswith('M104') or command.startswith('M109'):  # Set hotend temp
+            self.logger.info(f"🔥 TFT setting hotend temperature: {command}")
             # TODO: Future enhancement - parse temperature and send to Klipper
             self._send_ok_response()
         elif command.startswith('M140') or command.startswith('M190'):  # Set bed temp
+            self.logger.info(f"🛏️ TFT setting bed temperature: {command}")
             # TODO: Future enhancement - parse temperature and send to Klipper
             self._send_ok_response()
+        elif command.startswith('M106') or command.startswith('M107'):  # Fan control
+            self.logger.info(f"💨 TFT controlling fan: {command}")
+            # TODO: Future enhancement - forward to Klipper
+            self._send_ok_response()
         # TODO: Add more G-code commands for printer control:
-        #       G0/G1 (move), M106/M107 (fan), G91/G90 (positioning mode), etc.
+        #       G0/G1 (move), G91/G90 (positioning mode), etc.
         else:
+            self.logger.info(f"❓ TFT sent unknown/other command: {command}")
             # Generic OK response for other commands
             self._send_ok_response()
     
     def _send_temperature_response(self):
         """Send temperature data in standard M105 response format"""
-        # Standard Marlin M105 format: T:current /target B:current /target @:power B@:bed_power
-        response = (f"T:{self.current_temps['hotend_temp']:.1f} /"
+        # BIGTREETECH firmware expects "ok" prefix for M105 responses
+        response = (f"ok T:{self.current_temps['hotend_temp']:.1f} /"
                     f"{self.current_temps['hotend_target']:.1f} "
                     f"B:{self.current_temps['bed_temp']:.1f} /"
                     f"{self.current_temps['bed_target']:.1f} @:0 B@:0\r\n")
         self._send_response(response)
+    
+    def _send_initial_handshake(self):
+        """Send initial sequence to establish TFT connection"""
+        self.logger.info("🤝 Sending initial handshake to TFT...")
+        
+        # Send initial temperature response to trigger connection detection
+        self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
+        time.sleep(0.2)
+        
+        # Send firmware info
+        self._send_response("FIRMWARE_NAME:Klipper-TFT32-Bridge FIRMWARE_VERSION:1.0.0 MACHINE_TYPE:Klipper EXTRUDER_COUNT:1\r\n")
+        time.sleep(0.2)
+        
+        # Send OK to indicate ready
+        self._send_response("ok\r\n")
+        
+        self.logger.info("🤝 Initial handshake sent - TFT should start responding...")
     
     def _send_position_response(self):
         """Send position data in standard M114 response format"""

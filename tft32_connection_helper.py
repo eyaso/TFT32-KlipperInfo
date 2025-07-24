@@ -40,11 +40,11 @@ def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
         while time.time() - start_time < timeout:
             try:
                 # Send the CRITICAL temperature response that establishes connection
-                # Standard Marlin M105 format: T:current /target B:current /target @:power B@:bed_power
+                # BIGTREETECH firmware expects "ok" prefix for M105 responses
                 if response_count % 5 == 0:  # Every ~1 second  
-                    ser.write(b"T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
+                    ser.write(b"ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n")
                     ser.flush()
-                    print(f"🌡️ Sent connection temperature (standard M105 format)")
+                    print(f"🌡️ Sent connection temperature (with ok prefix)")
                 
                 # Send firmware identification periodically
                 if response_count % 10 == 0:  # Every ~2 seconds
@@ -64,7 +64,7 @@ def establish_connection(port="/dev/ttyS0", baudrate=115200, timeout=30):
                         
                         # Respond to specific commands with proper format
                         if incoming.startswith('M105'):  # Temperature request
-                            response = b"T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n"
+                            response = b"ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0\r\n"
                             ser.write(response)
                             ser.flush()
                             print(f"📤 PI >> TFT: '{response.decode().strip()}'")
