@@ -225,11 +225,6 @@ class TFT32Final:
         # Log all TFT >> PI communication for debugging
         self.logger.info(f"📥 TFT >> PI: '{command}'")
         
-        # Check for custom screen request
-        if command.startswith('M999'):
-            await self._send_comprehensive_data()
-            return
-        
         # For BIGTREETECH firmware, send immediate "ok" first to prevent timeout
         # EXCEPT for M105 which includes "ok" in the response
         if self.firmware_type == FirmwareType.BIGTREETECH and 'M105' not in command:
@@ -340,43 +335,7 @@ class TFT32Final:
             await self._send_response("test.gcode")
         await self._send_response("End file list")
 
-    async def _send_comprehensive_data(self):
-        """Send comprehensive printer data for custom TFT screen (KLIP format)"""
-        # Format time
-        elapsed_hours = int(self.print_stats['print_time'] // 3600)
-        elapsed_mins = int((self.print_stats['print_time'] % 3600) // 60)
-        elapsed_time = f"{elapsed_hours:02d}:{elapsed_mins:02d}"
-        
-        remaining_hours = int(self.print_stats.get('remaining_time', 0) // 3600)
-        remaining_mins = int((self.print_stats.get('remaining_time', 0) % 3600) // 60)
-        remaining_time = f"{remaining_hours:02d}:{remaining_mins:02d}"
-        
-        # Clean filename
-        filename = self.print_stats['filename'] or 'No file'
-        if '/' in filename:
-            filename = filename.split('/')[-1]
-        if len(filename) > 20:
-            filename = filename[:17] + "..."
-        
-        # Create KLIP string (same format as working dual_protocol)
-        comprehensive_string = (
-            f"KLIP:"
-            f"{self.current_temps['hotend_temp']:.1f}:"
-            f"{self.current_temps['hotend_target']:.1f}:"
-            f"{self.current_temps['bed_temp']:.1f}:"
-            f"{self.current_temps['bed_target']:.1f}:"
-            f"{self.print_stats['state']}:"
-            f"{self.print_stats['progress']:.0f}:"
-            f"{self.position['x_pos']:.2f}:"
-            f"{self.position['y_pos']:.2f}:"
-            f"{self.position['z_pos']:.2f}:"
-            f"{elapsed_time}/{remaining_time}:"
-            f"{filename}:"
-            f"{self.fan_speed}:100:0"  # fan_speed:flow_rate:extra
-        )
-        
-        await self._send_response(comprehensive_string)
-
+    
     async def _handle_action_command(self, command: str):
         """Handle action commands"""
         if "remote pause" in command:
@@ -416,6 +375,10 @@ class TFT32Final:
         # Send temperature update (what TFT expects continuously)
         await self._send_temperature_response()
         
+        # Send fan speed update (M106 command that TFT firmware expects)
+        fan_cmd = f"M106 S{self.fan_speed}"
+        await self._send_response(fan_cmd)
+        
         # Send print notifications based on state changes
         if self.firmware_type == FirmwareType.BIGTREETECH:
             if self.print_stats['state'] == 'printing':
@@ -452,7 +415,7 @@ class TFT32Final:
                     self.current_temps['bed_target'] = status['heater_bed'].get('target', 0.0)
             
             # Get position, print stats, and fan speed
-            stats_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?print_stats&display_status&toolhead&fan&heater_fan&nozzle_cooling_fan"
+            stats_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?print_stats&display_status&toolhead&fan"
             response = requests.get(stats_url, timeout=3)
             
             if response.status_code == 200:
@@ -476,16 +439,10 @@ class TFT32Final:
                     self.position['y_pos'] = position[1] if len(position) > 1 else 150.0
                     self.position['z_pos'] = position[2] if len(position) > 2 else 10.0
                 
-                # Get fan speed from multiple possible sources (as per documentation)
-                fan_speed = 0.0
+                # Get fan speed from main part cooling fan
                 if 'fan' in status:
-                    fan_speed = max(fan_speed, status['fan'].get('speed', 0.0))
-                if 'heater_fan' in status:
-                    fan_speed = max(fan_speed, status['heater_fan'].get('speed', 0.0))
-                if 'nozzle_cooling_fan' in status:
-                    fan_speed = max(fan_speed, status['nozzle_cooling_fan'].get('speed', 0.0))
-                
-                self.fan_speed = int(fan_speed * 100)  # Convert to percentage
+                    fan_speed_ratio = status['fan'].get('speed', 0.0)
+                    self.fan_speed = int(fan_speed_ratio * 100)  # Convert to percentage
                     
         except Exception:
             pass  # Silent failure, keep using current values
