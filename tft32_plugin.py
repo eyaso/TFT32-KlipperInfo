@@ -66,6 +66,7 @@ class TFT32Plugin:
         
         # Printer object will be set when Klipper is ready
         self.printer = None
+        self.klippy_apis = None
         
         # Register plugin startup
         self.server.register_event_handler("server:klippy_ready", self._on_klippy_ready)
@@ -76,14 +77,21 @@ class TFT32Plugin:
         if self.enabled:
             self.logger.info("🚀 TFT32 Plugin starting...")
             
-            # Now we can safely get the printer component
+            # Debug: List available components
             try:
-                self.printer = self.server.lookup_component("printer")
-                self.logger.info("✅ Connected to Klipper printer component")
+                components = list(self.server.components.keys())
+                self.logger.info(f"🔍 Available components: {components}")
             except Exception as e:
-                self.logger.error(f"❌ Failed to get printer component: {e}")
-                return
-                
+                self.logger.debug(f"Could not list components: {e}")
+            
+            # Try to get klippy_apis as alternative
+            try:
+                self.klippy_apis = self.server.lookup_component("klippy_apis")
+                self.logger.info("✅ Connected to klippy_apis component")
+            except Exception as e:
+                self.logger.debug(f"klippy_apis not available: {e}")
+            
+            # Start plugin without printer component - will be acquired later
             await self._start_plugin()
 
     async def _on_klippy_shutdown(self):
@@ -205,9 +213,26 @@ class TFT32Plugin:
     async def _update_from_klipper(self):
         """Fetch real data from Klipper via Moonraker"""
         try:
-            # Check if printer component is available
+            # Try to get printer component if we don't have it yet
             if self.printer is None:
-                return
+                try:
+                    self.printer = self.server.lookup_component("printer")
+                    self.logger.info("✅ Connected to Klipper printer component")
+                except Exception as e:
+                    # Try klippy_apis as alternative
+                    if self.klippy_apis is not None:
+                        try:
+                            objects = {'extruder': None, 'heater_bed': None, 'print_stats': None, 
+                                     'display_status': None, 'toolhead': None, 'fan': None}
+                            result = await self.klippy_apis.query_objects(objects)
+                            await self._process_klipper_data(result)
+                            return
+                        except Exception as api_error:
+                            self.logger.debug(f"klippy_apis query failed: {api_error}")
+                    
+                    # Neither method worked, use fallback data
+                    self.logger.debug(f"Printer component not ready: {e}")
+                    return
                 
             # Get printer objects for status queries
             objects = ['extruder', 'heater_bed', 'print_stats', 'display_status', 'toolhead', 'fan']
@@ -216,51 +241,55 @@ class TFT32Plugin:
             if not result:
                 return
                 
-            # Temperature data
-            if 'extruder' in result:
-                extruder = result['extruder']
-                self.current_temps['hotend_temp'] = extruder.get('temperature', 25.0)
-                self.current_temps['hotend_target'] = extruder.get('target', 0.0)
-            
-            if 'heater_bed' in result:
-                heater_bed = result['heater_bed']
-                self.current_temps['bed_temp'] = heater_bed.get('temperature', 22.0)
-                self.current_temps['bed_target'] = heater_bed.get('target', 0.0)
-            
-            # Print statistics
-            if 'print_stats' in result:
-                print_stats = result['print_stats']
-                self.print_stats['state'] = print_stats.get('state', 'standby')
-                self.print_stats['filename'] = print_stats.get('filename', '')
-                self.print_stats['print_time'] = print_stats.get('print_duration', 0.0)
-            
-            # Display status (progress)
-            if 'display_status' in result:
-                display_status = result['display_status']
-                self.print_stats['progress'] = display_status.get('progress', 0.0) * 100
-                
-                # Calculate remaining time
-                if self.print_stats['progress'] > 0 and self.print_stats['print_time'] > 0:
-                    total_time_estimate = self.print_stats['print_time'] / (self.print_stats['progress'] / 100)
-                    self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
-            
-            # Toolhead position
-            if 'toolhead' in result:
-                toolhead = result['toolhead']
-                position = toolhead.get('position', [150, 150, 10, 0])
-                self.position['x_pos'] = position[0] if len(position) > 0 else 150.0
-                self.position['y_pos'] = position[1] if len(position) > 1 else 150.0
-                self.position['z_pos'] = position[2] if len(position) > 2 else 10.0
-            
-            # Fan speed
-            if 'fan' in result:
-                fan = result['fan']
-                fan_speed_ratio = fan.get('speed', 0.0)
-                self.fan_speed = int(fan_speed_ratio * 100)
+            await self._process_klipper_data(result)
                 
         except Exception as e:
             self.logger.debug(f"Klipper query failed: {e}")
             # Keep using current values
+
+    async def _process_klipper_data(self, result):
+        """Process data from Klipper regardless of source"""
+        # Temperature data
+        if 'extruder' in result:
+            extruder = result['extruder']
+            self.current_temps['hotend_temp'] = extruder.get('temperature', 25.0)
+            self.current_temps['hotend_target'] = extruder.get('target', 0.0)
+        
+        if 'heater_bed' in result:
+            heater_bed = result['heater_bed']
+            self.current_temps['bed_temp'] = heater_bed.get('temperature', 22.0)
+            self.current_temps['bed_target'] = heater_bed.get('target', 0.0)
+        
+        # Print statistics
+        if 'print_stats' in result:
+            print_stats = result['print_stats']
+            self.print_stats['state'] = print_stats.get('state', 'standby')
+            self.print_stats['filename'] = print_stats.get('filename', '')
+            self.print_stats['print_time'] = print_stats.get('print_duration', 0.0)
+        
+        # Display status (progress)
+        if 'display_status' in result:
+            display_status = result['display_status']
+            self.print_stats['progress'] = display_status.get('progress', 0.0) * 100
+            
+            # Calculate remaining time
+            if self.print_stats['progress'] > 0 and self.print_stats['print_time'] > 0:
+                total_time_estimate = self.print_stats['print_time'] / (self.print_stats['progress'] / 100)
+                self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
+        
+        # Toolhead position
+        if 'toolhead' in result:
+            toolhead = result['toolhead']
+            position = toolhead.get('position', [150, 150, 10, 0])
+            self.position['x_pos'] = position[0] if len(position) > 0 else 150.0
+            self.position['y_pos'] = position[1] if len(position) > 1 else 150.0
+            self.position['z_pos'] = position[2] if len(position) > 2 else 10.0
+        
+        # Fan speed
+        if 'fan' in result:
+            fan = result['fan']
+            fan_speed_ratio = fan.get('speed', 0.0)
+            self.fan_speed = int(fan_speed_ratio * 100)
 
     async def _broadcast_status_updates(self):
         """Send status updates to TFT"""
