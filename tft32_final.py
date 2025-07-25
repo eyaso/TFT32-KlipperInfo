@@ -9,7 +9,6 @@ import time
 import logging
 import asyncio
 import requests
-import json
 import re
 from enum import Enum
 from typing import Optional, Dict, Any
@@ -108,64 +107,51 @@ class TFT32Final:
 
     async def _detect_firmware(self):
         """Detect firmware type by analyzing initial communication"""
-        detection_timeout = 10
-        start_time = time.time()
+        self.logger.info("🔍 Waiting for initial TFT communication...")
         
-        while time.time() - start_time < detection_timeout and not self.detection_complete:
+        # Wait for any initial commands from TFT to see if it's active
+        detection_timeout = 15  # Give more time
+        start_time = time.time()
+        received_any_data = False
+        
+        while time.time() - start_time < detection_timeout:
             if self.serial_conn and self.serial_conn.in_waiting > 0:
                 try:
                     incoming = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if incoming:
-                        if self._analyze_command_for_detection(incoming):
-                            break
-                        await self._send_generic_response(incoming)
-                except Exception:
-                    pass
+                        received_any_data = True
+                        self.logger.info(f"🔍 Detection phase - received: '{incoming}'")
+                        # Send basic response to keep communication alive
+                        if 'M105' in incoming:
+                            await self._send_response("T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
+                        else:
+                            await self._send_response("ok")
+                except Exception as e:
+                    self.logger.error(f"Detection error: {e}")
             
             await asyncio.sleep(0.1)
         
-        if self.firmware_type == FirmwareType.UNKNOWN:
-            self.firmware_type = FirmwareType.BIGTREETECH
+        if not received_any_data:
+            self.logger.warning("⚠️ No initial communication from TFT detected!")
+            self.logger.info("💡 TFT might be in Touch Mode or waiting for different handshake")
         
+        # Default to BIGTREETECH
+        self.firmware_type = FirmwareType.BIGTREETECH
         self.detection_complete = True
+        self.logger.info(f"🎯 Using firmware type: {self.firmware_type.value}")
+        
         await self._send_initial_handshake()
 
-    def _analyze_command_for_detection(self, command: str) -> bool:
-        """Analyze command to detect firmware type"""
-        if any(pattern in command for pattern in ['>>N', '*', 'M105*', 'checksum']):
-            self.firmware_type = FirmwareType.BIGTREETECH
-            return True
-        
-        if command.strip() == 'M105' or command.startswith('M105') and '*' not in command:
-            self.firmware_type = FirmwareType.MKS_ORIGINAL
-            return True
-        
-        return False
 
-    async def _send_generic_response(self, command: str):
-        """Send a generic response during detection phase"""
-        if 'M105' in command:
-            await self._send_response("T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
-        else:
-            await self._send_response("ok")
 
     async def _send_initial_handshake(self):
         """Send initial handshake based on detected firmware"""
-        if self.firmware_type == FirmwareType.MKS_ORIGINAL:
-            await self._send_mks_handshake()
-        else:
-            await self._send_btt_handshake()
-
-    async def _send_mks_handshake(self):
-        """Send handshake for MKS Original firmware"""
-        await self._send_response("T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
-        await asyncio.sleep(0.2)
-        await self._send_response("FIRMWARE_NAME:MKS-TFT FIRMWARE_VERSION:2.0.6")
-        await asyncio.sleep(0.1)
-        await self._send_response("ok")
+        await self._send_btt_handshake()
 
     async def _send_btt_handshake(self):
         """Send handshake for BIGTREETECH firmware"""
+        self.logger.info("🤝 Sending BIGTREETECH handshake...")
+        
         # BTT firmware expects Marlin-style responses
         await self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
         await asyncio.sleep(0.2)
@@ -187,6 +173,19 @@ class TFT32Final:
             await asyncio.sleep(0.05)
         
         await self._send_response("ok")
+        self.logger.info("✅ Handshake complete - TFT should now be active")
+        
+        # Send the initialization sequence that BTT firmware expects
+        # This should trigger the TFT to start sending regular queries
+        self.logger.info("🔧 Sending initialization sequence...")
+        await asyncio.sleep(0.5)
+        
+        # Send M503 response to indicate we're ready for configuration
+        await self._send_response("echo:  G21    ; Units in mm (mm)")
+        await self._send_response("echo:  M149 C ; Units in Celsius")
+        await self._send_response("ok")
+        
+        # This should trigger the TFT to start sending M105 queries
 
     async def _send_response(self, message: str):
         """Send response to TFT"""
@@ -196,7 +195,7 @@ class TFT32Final:
         try:
             self.serial_conn.write(f"{message}\r\n".encode())
             self.serial_conn.flush()
-            self.logger.debug(f"📤 PI >> TFT: {message}")
+            self.logger.info(f"📤 PI >> TFT: {message}")  # Changed to INFO to see all traffic
         except Exception as e:
             self.logger.error(f"Send error: {e}")
 
@@ -376,7 +375,8 @@ class TFT32Final:
         await self._send_temperature_response()
         
         # Send fan speed update (M106 command that TFT firmware expects)
-        fan_cmd = f"M106 S{self.fan_speed}"
+        fan_pwm = int((self.fan_speed / 100.0) * 255)  # Convert percentage to PWM (0-255)
+        fan_cmd = f"M106 S{fan_pwm}"
         await self._send_response(fan_cmd)
         
         # Send print notifications based on state changes
