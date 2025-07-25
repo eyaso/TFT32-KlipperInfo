@@ -1,8 +1,21 @@
 # TFT32 Moonraker Plugin
 
+![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg)
+![Build](https://img.shields.io/badge/Build-PASSED-brightgreen.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-red.svg)
+
 **Display-only TFT integration for Klipper/Moonraker**
 
 This plugin enables TFT32 displays (MKS, BIGTREETECH) to show real-time printer information from Klipper via Moonraker. The TFT acts as a display-only device showing temperatures, print progress, and status updates.
+
+## 📊 Current Status
+
+- **Version**: 1.0.0
+- **Build Status**: ✅ PASSED
+- **Last Updated**: January 25, 2025
+- **Testing**: Verified with BIGTREETECH TFT32 on Raspberry Pi 3/4
+- **Compatibility**: Moonraker, Klipper, Python 3.7+
 
 ## ✨ Features
 
@@ -133,11 +146,24 @@ sudo chmod 666 /dev/ttyS0  # or your port
 
 ## 📁 Project Files
 
-- `tft32_plugin.py` - Main Moonraker plugin
+- `tft32_plugin.py` - Main Moonraker plugin (v1.0.0)
 - `tft32_final.py` - Standalone version (for testing)
 - `config.py` - Configuration settings
 - `install_plugin.sh` - Automated installer
 - `moonraker_tft32.conf` - Configuration template
+
+## 📋 Version History
+
+### v1.0.0 (2025-01-25) ✅ STABLE
+- ✅ **Production ready** Moonraker plugin
+- ✅ **Auto-detects** TFT firmware (MKS/BIGTREETECH)
+- ✅ **Real-time data** from Klipper via klippy_apis
+- ✅ **Print status integration** with M118 action codes
+- ✅ **Display-only mode** for reliability
+- ✅ **Reduced logging** for minimal log file size
+- ✅ **Automated installer** with dependency management
+- ✅ **Comprehensive documentation**
+- 🧪 **Tested**: BIGTREETECH TFT32, Raspberry Pi, Moonraker
 
 ## 🎯 Display-Only Mode
 

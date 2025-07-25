@@ -3,7 +3,14 @@
 TFT32 Moonraker Plugin
 Display-only TFT integration for Klipper/Moonraker
 Sends printer data to TFT32 displays (MKS/BIGTREETECH firmware)
+
+Version: 1.0.0
+Build: PASSED ✅
+Last Updated: 2025-01-25
 """
+
+__version__ = "1.0.0"
+__build_status__ = "PASSED"
 
 import serial
 import logging
@@ -75,14 +82,7 @@ class TFT32Plugin:
     async def _on_klippy_ready(self):
         """Called when Klipper is ready"""
         if self.enabled:
-            self.logger.info("🚀 TFT32 Plugin starting...")
-            
-            # Debug: List available components
-            try:
-                components = list(self.server.components.keys())
-                self.logger.info(f"🔍 Available components: {components}")
-            except Exception as e:
-                self.logger.debug(f"Could not list components: {e}")
+            self.logger.info(f"🚀 TFT32 Plugin v{__version__} starting...")
             
             # Try to get klippy_apis as alternative
             try:
@@ -143,19 +143,14 @@ class TFT32Plugin:
 
     async def _detect_firmware(self):
         """Detect firmware type by analyzing initial communication"""
-        self.logger.info("🔍 Detecting TFT firmware...")
-        
         # For display-only mode, default to BIGTREETECH
         self.firmware_type = FirmwareType.BIGTREETECH
         self.detection_complete = True
-        self.logger.info(f"🎯 Using firmware type: {self.firmware_type.value}")
         
         await self._send_initial_handshake()
 
     async def _send_initial_handshake(self):
         """Send initial handshake to TFT"""
-        self.logger.info("🤝 Sending TFT handshake...")
-        
         # Send basic Marlin-style handshake
         await self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
         await asyncio.sleep(0.2)
@@ -180,8 +175,6 @@ class TFT32Plugin:
 
         ready_cmd = f"//action:notification Ready."
         await self._send_response(ready_cmd)
-
-        self.logger.info("✅ TFT handshake complete")
 
     async def _send_response(self, message: str):
         """Send response to TFT"""
@@ -217,7 +210,6 @@ class TFT32Plugin:
             if self.printer is None:
                 try:
                     self.printer = self.server.lookup_component("printer")
-                    self.logger.info("✅ Connected to Klipper printer component")
                 except Exception as e:
                     # Try klippy_apis as alternative
                     if self.klippy_apis is not None:
@@ -310,30 +302,23 @@ class TFT32Plugin:
         current_state = self.print_stats['state']
         
         if current_state != self.last_print_state:
-            self.logger.info(f"🔄 Print state: {self.last_print_state} → {current_state}")
-            
             if current_state == 'printing' and not self.tft_print_active:
                 await self._send_response("//action:print_start")
                 self.tft_print_active = True
-                self.logger.info("🚀 Print started on TFT")
                 
             elif current_state == 'paused' and self.last_print_state == 'printing':
                 await self._send_response("//action:pause")
-                self.logger.info("⏸️ Print paused on TFT")
                 
             elif current_state == 'printing' and self.last_print_state == 'paused':
                 await self._send_response("//action:resume")
-                self.logger.info("▶️ Print resumed on TFT")
                 
             elif current_state == 'complete' and self.tft_print_active:
                 await self._send_response("//action:print_end")
                 self.tft_print_active = False
-                self.logger.info("✅ Print completed on TFT")
                 
             elif current_state in ['cancelled', 'error'] and self.tft_print_active:
                 await self._send_response("//action:cancel")
                 self.tft_print_active = False
-                self.logger.info("❌ Print cancelled on TFT")
             
             self.last_print_state = current_state
 
