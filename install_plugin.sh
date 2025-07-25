@@ -49,7 +49,22 @@ echo "✅ Plugin installed to: $PLUGIN_DEST"
 
 # Install Python dependencies
 echo "📚 Installing Python dependencies..."
-pip3 install pyserial
+
+# Try different methods to install pyserial
+if command -v apt &> /dev/null; then
+    echo "🔧 Using apt to install python3-serial..."
+    sudo apt update
+    sudo apt install -y python3-serial
+elif pip3 install --break-system-packages pyserial 2>/dev/null; then
+    echo "✅ Installed pyserial with --break-system-packages"
+elif python3 -m pip install --user pyserial 2>/dev/null; then
+    echo "✅ Installed pyserial with --user flag"
+else
+    echo "⚠️ Could not install pyserial automatically"
+    echo "💡 Please install manually with:"
+    echo "   sudo apt install python3-serial"
+    echo "   OR: pip3 install --user pyserial"
+fi
 
 # Check moonraker.conf location
 CONF_LOCATIONS=(
