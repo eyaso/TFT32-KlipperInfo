@@ -142,8 +142,6 @@ class TFT32Final:
         
         await self._send_initial_handshake()
 
-
-
     async def _send_initial_handshake(self):
         """Send initial handshake based on detected firmware"""
         await self._send_btt_handshake()
@@ -156,8 +154,8 @@ class TFT32Final:
         await self._send_response("ok T:25.0 /0.0 B:22.0 /0.0 @:0 B@:0")
         await asyncio.sleep(0.2)
         
-        # Firmware with capabilities
-        await self._send_response("FIRMWARE_NAME:Klipper HOST_ACTION_COMMANDS:1 EXTRUDER_COUNT:1")
+        # Firmware with capabilities - identify as Marlin for proper TFT initialization
+        await self._send_response("FIRMWARE_NAME:Marlin 2.1.0 (Klipper Compatible) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 MACHINE_TYPE:3D Printer EXTRUDER_COUNT:1")
         await asyncio.sleep(0.1)
         
         # Send capabilities (from working version)
@@ -184,6 +182,12 @@ class TFT32Final:
         await self._send_response("echo:  G21    ; Units in mm (mm)")
         await self._send_response("echo:  M149 C ; Units in Celsius")
         await self._send_response("ok")
+        
+        # Critical: Send the "connected" signal that TFT expects
+        # This tells TFT that a printer is connected and ready
+        await asyncio.sleep(0.2)
+        await self._send_response("start")  # Boot message some printers send
+        await asyncio.sleep(0.1)
         
         # This should trigger the TFT to start sending M105 queries
 
@@ -308,7 +312,7 @@ class TFT32Final:
         if self.firmware_type == FirmwareType.MKS_ORIGINAL:
             await self._send_response("FIRMWARE_NAME:MKS-TFT FIRMWARE_VERSION:2.0.6")
         else:
-            await self._send_response("FIRMWARE_NAME:Klipper HOST_ACTION_COMMANDS:1 EXTRUDER_COUNT:1")
+            await self._send_response("FIRMWARE_NAME:Marlin 2.1.0 (Klipper Compatible) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 MACHINE_TYPE:3D Printer EXTRUDER_COUNT:1")
 
     async def _send_position_response(self):
         """Send position response"""
