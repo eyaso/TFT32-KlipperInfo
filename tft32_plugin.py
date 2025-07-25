@@ -4,12 +4,12 @@ TFT32 Moonraker Plugin
 Display-only TFT integration for Klipper/Moonraker
 Sends printer data to TFT32 displays (MKS/BIGTREETECH firmware)
 
-Version: 1.0.0
+Version: 1.1.0
 Build: PASSED ✅
 Last Updated: 2025-01-25
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __build_status__ = "PASSED"
 
 import serial
@@ -60,7 +60,9 @@ class TFT32Plugin:
             'progress': 0.0,
             'filename': '',
             'print_time': 0.0,
-            'remaining_time': 0
+            'remaining_time': 0,
+            'current_layer': 0,
+            'total_layers': 0
         }
         self.fan_speed = 0  # Fan speed percentage (0-100)
         
@@ -215,7 +217,7 @@ class TFT32Plugin:
                     if self.klippy_apis is not None:
                         try:
                             objects = {'extruder': None, 'heater_bed': None, 'print_stats': None, 
-                                     'display_status': None, 'toolhead': None, 'fan': None}
+                                     'display_status': None, 'toolhead': None, 'fan': None, 'virtual_sdcard': None}
                             result = await self.klippy_apis.query_objects(objects)
                             await self._process_klipper_data(result)
                             return
@@ -226,8 +228,8 @@ class TFT32Plugin:
                     self.logger.debug(f"Printer component not ready: {e}")
                     return
                 
-            # Get printer objects for status queries
-            objects = ['extruder', 'heater_bed', 'print_stats', 'display_status', 'toolhead', 'fan']
+            # Get printer objects for status queries (including virtual_sdcard for layer info)
+            objects = ['extruder', 'heater_bed', 'print_stats', 'display_status', 'toolhead', 'fan', 'virtual_sdcard']
             result = await self.printer.query_status(objects)
             
             if not result:
@@ -258,16 +260,35 @@ class TFT32Plugin:
             self.print_stats['state'] = print_stats.get('state', 'standby')
             self.print_stats['filename'] = print_stats.get('filename', '')
             self.print_stats['print_time'] = print_stats.get('print_duration', 0.0)
-        
-        # Display status (progress)
-        if 'display_status' in result:
-            display_status = result['display_status']
-            self.print_stats['progress'] = display_status.get('progress', 0.0) * 100
             
-            # Calculate remaining time
-            if self.print_stats['progress'] > 0 and self.print_stats['print_time'] > 0:
-                total_time_estimate = self.print_stats['print_time'] / (self.print_stats['progress'] / 100)
-                self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
+            # Get layer information from print_stats.info (Slicer SET_PRINT_STATS_INFO)
+            info = print_stats.get('info', {})
+            current_layer = info.get('current_layer') if info else None
+            total_layer = info.get('total_layer') if info else None
+            
+            # Prioritize real layer data from slicer (Slicer with SET_PRINT_STATS_INFO)
+            if current_layer is not None and total_layer is not None:
+                self.print_stats['current_layer'] = current_layer
+                self.print_stats['total_layers'] = total_layer
+                self.logger.debug(f"📐 Real layer data: {current_layer}/{total_layer}")
+            else:
+                # Will calculate from virtual_sdcard as fallback
+                self.print_stats['current_layer'] = 0
+                self.print_stats['total_layers'] = 0
+        
+        # Display status (progress) - use virtual_sdcard progress for more accuracy
+        progress = 0.0
+        if 'virtual_sdcard' in result:
+            progress = result['virtual_sdcard'].get('progress', 0.0)
+        elif 'display_status' in result:
+            progress = result['display_status'].get('progress', 0.0)
+        
+        self.print_stats['progress'] = progress * 100
+        
+        # Calculate remaining time using more accurate data
+        if self.print_stats['progress'] > 0 and self.print_stats['print_time'] > 0:
+            total_time_estimate = self.print_stats['print_time'] / (self.print_stats['progress'] / 100)
+            self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
         
         # Toolhead position
         if 'toolhead' in result:
@@ -282,6 +303,29 @@ class TFT32Plugin:
             fan = result['fan']
             fan_speed_ratio = fan.get('speed', 0.0)
             self.fan_speed = int(fan_speed_ratio * 100)
+        
+        # Fallback: Layer estimation from virtual_sdcard when slicer doesn't provide layer info
+        if ('virtual_sdcard' in result and 'print_stats' in result and 
+            result['print_stats'].get('state') == 'printing' and 
+            self.print_stats['total_layers'] == 0):  # Only if no real layer data
+            
+            virtual_sdcard = result['virtual_sdcard']
+            file_position = virtual_sdcard.get('file_position', 0)
+            file_size = virtual_sdcard.get('file_size', 1)
+            is_active = virtual_sdcard.get('is_active', False)
+            
+            if file_size > 0 and is_active:
+                # Fallback estimation when PrusaSlicer SET_PRINT_STATS_INFO not used
+                progress_ratio = file_position / file_size
+                
+                # Estimate based on common print parameters
+                # Assume 0.2mm layer height, ~40mm print height = ~200 layers
+                estimated_total_layers = 200
+                estimated_current = max(1, int(progress_ratio * estimated_total_layers))
+                
+                self.print_stats['current_layer'] = estimated_current
+                self.print_stats['total_layers'] = estimated_total_layers
+                self.logger.debug(f"📐 Estimated layers: {estimated_current}/{estimated_total_layers} (from file progress)")
 
     async def _broadcast_status_updates(self):
         """Send status updates to TFT"""
@@ -340,6 +384,13 @@ class TFT32Plugin:
             seconds = int(self.print_stats['remaining_time'] % 60)
             time_cmd = f"//action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
             await self._send_response(time_cmd)
+        
+        # Layer information (only send if we have reasonable estimates)
+        if (self.print_stats['total_layers'] > 0 and 
+            self.print_stats['current_layer'] > 0 and 
+            self.print_stats['current_layer'] <= self.print_stats['total_layers']):
+            layer_cmd = f"//action:notification Layer Left {self.print_stats['current_layer']}/{self.print_stats['total_layers']}"
+            await self._send_response(layer_cmd)
 
     async def _send_temperature_response(self):
         """Send temperature response"""

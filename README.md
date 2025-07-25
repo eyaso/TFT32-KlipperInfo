@@ -1,6 +1,6 @@
 # TFT32 Moonraker Plugin
 
-![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.1.0-blue.svg)
 ![Build](https://img.shields.io/badge/Build-PASSED-brightgreen.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-red.svg)
@@ -11,7 +11,7 @@ This plugin enables TFT32 displays (MKS, BIGTREETECH) to show real-time printer 
 
 ## 📊 Current Status
 
-- **Version**: 1.0.0
+- **Version**: 1.1.0
 - **Build Status**: ✅ PASSED
 - **Last Updated**: January 25, 2025
 - **Testing**: Verified with BIGTREETECH TFT32 on Raspberry Pi 3/4
@@ -76,11 +76,34 @@ enabled: True
 serial_port: /dev/ttyS0
 
 # Baud rate - must match your TFT firmware setting
-baudrate: 57600
+baudrate: 115200
 
 # Update interval in seconds
 update_interval: 3.0
 ```
+
+### 🔄 Auto-Update Configuration
+
+For automatic updates when new versions are released, add this to your `moonraker.conf`:
+
+```ini
+[update_manager tft32_plugin]
+type: git_repo
+channel: dev
+path: ~/TFT32-KlipperInfo
+origin: https://github.com/e-yaso/TFT32-KlipperInfo.git
+managed_services: moonraker
+primary_branch: main
+install_script: install_plugin.sh
+refresh_interval: 24
+enable_version_rollback: True
+```
+
+This enables:
+- 🔄 **Automatic updates** when new versions are pushed
+- 📱 **Mainsail/Fluidd integration** for manual updates
+- 🔒 **Version rollback** if needed
+- ⏰ **Daily update checks**
 
 ### Common Serial Configurations
 
@@ -113,8 +136,9 @@ dtoverlay=disable-bt
 Once running, your TFT will display:
 
 - **Temperature readings** updating every 3 seconds
-- **Print progress** as percentage and time remaining
+- **Print progress** as percentage and time remaining  
 - **Print status changes** (printing/paused/completed)
+- **Layer information** (real data from PrusaSlicer or estimated)
 - **Fan speed** as PWM values
 - **Position updates** during moves
 
@@ -146,11 +170,12 @@ sudo chmod 666 /dev/ttyS0  # or your port
 
 ## 📁 Project Files
 
-- `tft32_plugin.py` - Main Moonraker plugin (v1.0.0)
+- `tft32_plugin.py` - Main Moonraker plugin (v1.1.0)
 - `tft32_final.py` - Standalone version (for testing)
 - `config.py` - Configuration settings
 - `install_plugin.sh` - Automated installer
 - `moonraker_tft32.conf` - Configuration template
+- `moonraker_update_config.conf` - Auto-update configuration  
 
 ## 📋 Version History
 

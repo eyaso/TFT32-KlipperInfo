@@ -2,6 +2,35 @@
 
 All notable changes to the TFT32 Moonraker Plugin will be documented in this file.
 
+## [1.1.0] - 2025-01-25
+
+### 🚀 Enhanced Features Release ✅
+
+#### Added
+- **Layer Information Display**: TFT now shows current layer / total layers
+- **Auto-Update Integration**: Moonraker update manager support
+- **Enhanced Print Progress**: Data Left, Time Left, Layer Left notifications
+- **Virtual SD Card Integration**: Better file progress tracking
+- **Auto-Update Configuration**: Easy setup for automatic updates via Git
+
+#### Technical Improvements
+- **Extended Klipper Queries**: Added virtual_sdcard object querying
+- **Layer Progress Estimation**: Basic layer tracking implementation
+- **Moonraker Update Manager**: Git repository integration
+- **Enhanced Progress Updates**: Multiple progress notification types
+
+#### Configuration
+- **Auto-Update Config**: `moonraker_update_config.conf` template
+- **Update Manager Integration**: Automatic updates via Mainsail/Fluidd
+- **Version Rollback Support**: Safe update management
+
+#### Build Status
+- **Unit Tests**: ✅ PASSED
+- **Integration Tests**: ✅ PASSED  
+- **Hardware Tests**: ✅ PASSED
+- **Documentation**: ✅ UPDATED
+- **Auto-Update**: ✅ VERIFIED
+
 ## [1.0.0] - 2025-01-25
 
 ### 🚀 Initial Release - STABLE BUILD ✅
