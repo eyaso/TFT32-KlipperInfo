@@ -378,21 +378,21 @@ class TFT32Final:
             success = await self._send_moonraker_command("printer/print/pause")
             if success:
                 # Confirm pause to TFT
-                await self._send_response("M118 P0 A1 action:pause")
+                await self._send_response("//action:pause")
                 
         elif "remote resume" in command:
             self.logger.info("🎮 TFT requested resume")
             success = await self._send_moonraker_command("printer/print/resume")
             if success:
                 # Confirm resume to TFT
-                await self._send_response("M118 P0 A1 action:resume")
+                await self._send_response("//action:resume")
                 
         elif "remote cancel" in command:
             self.logger.info("🎮 TFT requested cancel")
             success = await self._send_moonraker_command("printer/print/cancel")
             if success:
                 # Confirm cancel to TFT
-                await self._send_response("M118 P0 A1 action:cancel")
+                await self._send_response("//action:cancel")
 
     async def _send_moonraker_command(self, endpoint: str):
         """Send command to Moonraker and return success status"""
@@ -445,29 +445,29 @@ class TFT32Final:
             
             if current_state == 'printing' and not self.tft_print_active:
                 # Print started
-                await self._send_response("M118 P0 A1 action:print_start")
+                await self._send_response("//action:print_start")
                 self.tft_print_active = True
                 self.logger.info("🚀 Sent print_start to TFT")
                 
             elif current_state == 'paused' and self.last_print_state == 'printing':
                 # Print paused
-                await self._send_response("M118 P0 A1 action:pause")
+                await self._send_response("//action:pause")
                 self.logger.info("⏸️ Sent pause to TFT")
                 
             elif current_state == 'printing' and self.last_print_state == 'paused':
                 # Print resumed
-                await self._send_response("M118 P0 A1 action:resume")
+                await self._send_response("//action:resume")
                 self.logger.info("▶️ Sent resume to TFT")
                 
             elif current_state == 'complete' and self.tft_print_active:
                 # Print completed
-                await self._send_response("M118 P0 A1 action:print_end")
+                await self._send_response("//action:print_end")
                 self.tft_print_active = False
                 self.logger.info("✅ Sent print_end to TFT")
                 
             elif current_state in ['cancelled', 'error'] and self.tft_print_active:
                 # Print cancelled or error
-                await self._send_response("M118 P0 A1 action:cancel")
+                await self._send_response("//action:cancel")
                 self.tft_print_active = False
                 self.logger.info("❌ Sent cancel to TFT")
             
@@ -481,7 +481,7 @@ class TFT32Final:
         # Send file data progress (percentage)
         if self.print_stats['progress'] > 0:
             progress_percent = int(self.print_stats['progress'])
-            progress_cmd = f"M118 P0 A1 action:notification Data Left {progress_percent}/100"
+            progress_cmd = f"//action:notification Data Left {progress_percent}/100"
             await self._send_response(progress_cmd)
         
         # Send time left if available
@@ -489,7 +489,7 @@ class TFT32Final:
             hours = int(self.print_stats['remaining_time'] // 3600)
             minutes = int((self.print_stats['remaining_time'] % 3600) // 60)
             seconds = int(self.print_stats['remaining_time'] % 60)
-            time_cmd = f"M118 P0 A1 action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
+            time_cmd = f"//action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
             await self._send_response(time_cmd)
 
     async def _update_from_moonraker(self):
