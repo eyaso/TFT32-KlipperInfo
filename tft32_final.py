@@ -62,6 +62,10 @@ class TFT32Final:
         }
         self.fan_speed = 0  # Fan speed percentage (0-100)
         
+        # Track print state changes for proper TFT notifications
+        self.last_print_state = 'standby'
+        self.tft_print_active = False
+        
         # Setup logging for communication monitoring
         self.logger = logging.getLogger('TFT32Final')
         self.logger.setLevel(logging.INFO)  # Show communication for debugging
@@ -368,26 +372,42 @@ class TFT32Final:
 
     
     async def _handle_action_command(self, command: str):
-        """Handle action commands"""
+        """Handle action commands from TFT and respond appropriately"""
         if "remote pause" in command:
             self.logger.info("🎮 TFT requested pause")
-            await self._send_moonraker_command("printer/print/pause")
+            success = await self._send_moonraker_command("printer/print/pause")
+            if success:
+                # Confirm pause to TFT
+                await self._send_response("M118 P0 A1 action:pause")
+                
         elif "remote resume" in command:
             self.logger.info("🎮 TFT requested resume")
-            await self._send_moonraker_command("printer/print/resume")
+            success = await self._send_moonraker_command("printer/print/resume")
+            if success:
+                # Confirm resume to TFT
+                await self._send_response("M118 P0 A1 action:resume")
+                
         elif "remote cancel" in command:
             self.logger.info("🎮 TFT requested cancel")
-            await self._send_moonraker_command("printer/print/cancel")
+            success = await self._send_moonraker_command("printer/print/cancel")
+            if success:
+                # Confirm cancel to TFT
+                await self._send_response("M118 P0 A1 action:cancel")
 
     async def _send_moonraker_command(self, endpoint: str):
-        """Send command to Moonraker"""
+        """Send command to Moonraker and return success status"""
         try:
             url = f"http://{self.moonraker_host}:{self.moonraker_port}/{endpoint}"
             response = requests.post(url, timeout=5)
-            if response.status_code != 200:
-                self.logger.warning(f"Moonraker command failed: {response.status_code}")
+            if response.status_code == 200:
+                self.logger.info(f"✅ Moonraker command successful: {endpoint}")
+                return True
+            else:
+                self.logger.warning(f"❌ Moonraker command failed: {response.status_code}")
+                return False
         except Exception as e:
-            self.logger.warning(f"Failed to send Moonraker command: {e}")
+            self.logger.warning(f"❌ Failed to send Moonraker command: {e}")
+            return False
 
     async def update_loop(self):
         """Update printer data from Moonraker and broadcast status"""
@@ -411,21 +431,66 @@ class TFT32Final:
         fan_cmd = f"M106 S{fan_pwm}"
         await self._send_response(fan_cmd)
         
-        # Send print notifications based on state changes
-        if self.firmware_type == FirmwareType.BIGTREETECH:
-            if self.print_stats['state'] == 'printing':
-                # Send print progress notifications
-                if self.print_stats['progress'] > 0:
-                    progress_cmd = f"M118 P0 A1 action:notification Data Left {self.print_stats['progress']:.0f}/100"
-                    await self._send_response(progress_cmd)
+        # Handle print state changes for proper TFT integration
+        await self._handle_print_state_changes()
+        await self._send_print_progress_updates()
+
+    async def _handle_print_state_changes(self):
+        """Handle print state changes and send appropriate M118 action codes"""
+        current_state = self.print_stats['state']
+        
+        # Detect state changes and send appropriate action codes
+        if current_state != self.last_print_state:
+            self.logger.info(f"🔄 Print state changed: {self.last_print_state} → {current_state}")
+            
+            if current_state == 'printing' and not self.tft_print_active:
+                # Print started
+                await self._send_response("M118 P0 A1 action:print_start")
+                self.tft_print_active = True
+                self.logger.info("🚀 Sent print_start to TFT")
                 
-                # Send time left if available
-                if self.print_stats['remaining_time'] > 0:
-                    hours = int(self.print_stats['remaining_time'] // 3600)
-                    minutes = int((self.print_stats['remaining_time'] % 3600) // 60)
-                    seconds = int(self.print_stats['remaining_time'] % 60)
-                    time_cmd = f"M118 P0 A1 action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
-                    await self._send_response(time_cmd)
+            elif current_state == 'paused' and self.last_print_state == 'printing':
+                # Print paused
+                await self._send_response("M118 P0 A1 action:pause")
+                self.logger.info("⏸️ Sent pause to TFT")
+                
+            elif current_state == 'printing' and self.last_print_state == 'paused':
+                # Print resumed
+                await self._send_response("M118 P0 A1 action:resume")
+                self.logger.info("▶️ Sent resume to TFT")
+                
+            elif current_state == 'complete' and self.tft_print_active:
+                # Print completed
+                await self._send_response("M118 P0 A1 action:print_end")
+                self.tft_print_active = False
+                self.logger.info("✅ Sent print_end to TFT")
+                
+            elif current_state in ['cancelled', 'error'] and self.tft_print_active:
+                # Print cancelled or error
+                await self._send_response("M118 P0 A1 action:cancel")
+                self.tft_print_active = False
+                self.logger.info("❌ Sent cancel to TFT")
+            
+            self.last_print_state = current_state
+
+    async def _send_print_progress_updates(self):
+        """Send print progress updates when actively printing"""
+        if not self.tft_print_active or self.print_stats['state'] != 'printing':
+            return
+        
+        # Send file data progress (percentage)
+        if self.print_stats['progress'] > 0:
+            progress_percent = int(self.print_stats['progress'])
+            progress_cmd = f"M118 P0 A1 action:notification Data Left {progress_percent}/100"
+            await self._send_response(progress_cmd)
+        
+        # Send time left if available
+        if self.print_stats['remaining_time'] > 0:
+            hours = int(self.print_stats['remaining_time'] // 3600)
+            minutes = int((self.print_stats['remaining_time'] % 3600) // 60)
+            seconds = int(self.print_stats['remaining_time'] % 60)
+            time_cmd = f"M118 P0 A1 action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
+            await self._send_response(time_cmd)
 
     async def _update_from_moonraker(self):
         """Fetch real data from Moonraker"""
@@ -459,6 +524,10 @@ class TFT32Final:
                     self.print_stats['state'] = stats.get('state', 'standby')
                     self.print_stats['filename'] = stats.get('filename', '')
                     self.print_stats['print_time'] = stats.get('print_duration', 0.0)
+                    # Calculate remaining time based on progress and print time
+                    if self.print_stats['progress'] > 0:
+                        total_time_estimate = self.print_stats['print_time'] / (self.print_stats['progress'] / 100)
+                        self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
                 
                 if 'display_status' in status:
                     display = status['display_status']
