@@ -481,7 +481,10 @@ async def main():
             print("🎮 TFT controls active")
             print("📊 Real Moonraker data")
             print("\n💡 Press Ctrl+C to stop")
-            
+
+            await client._send_btt_handshake()
+            print("🔄 Starting communication and update loops...")
+
             await asyncio.gather(
                 client.communication_loop(),
                 client.update_loop()
