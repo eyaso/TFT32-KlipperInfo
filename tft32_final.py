@@ -205,47 +205,28 @@ class TFT32Final:
         """Main communication loop"""
         self.running = True
         
-        # Add debugging counters
-        loop_count = 0
-        last_debug = 0
-        
         while self.running:
             if not self.connected:
                 await asyncio.sleep(1.0)
-                self.logger.info(f"Waiting for connection...")
                 continue
             
             try:
-                # Enhanced debugging - check raw serial state
-                loop_count += 1
-                
-                # Debug every 100 loops (10 seconds)
-                if loop_count - last_debug >= 100:
-                    bytes_waiting = self.serial_conn.in_waiting if self.serial_conn else 0
-                    self.logger.info(f"🔍 Loop {loop_count}: {bytes_waiting} bytes waiting, connected={self.connected}")
-                    last_debug = loop_count
-                
                 if self.serial_conn and self.serial_conn.in_waiting > 0:
                     # Try both readline and read to see what we get
                     bytes_available = self.serial_conn.in_waiting
-                    self.logger.info(f"📊 {bytes_available} bytes available to read")
                     
                     # Method 1: Try readline (what we're currently using)
                     incoming = self.serial_conn.readline().decode('utf-8', errors='ignore').strip()
                     if incoming:
-                        self.logger.info(f"📥 READLINE got: '{incoming}'")
                         await self._handle_command(incoming)
                     else:
                         # Method 2: If readline fails, try reading raw bytes
                         self.serial_conn.reset_input_buffer()  # Reset position
                         raw_data = self.serial_conn.read(bytes_available)
                         if raw_data:
-                            self.logger.info(f"🔧 RAW BYTES: {raw_data}")
-                            # Try to decode and process
                             try:
                                 decoded = raw_data.decode('utf-8', errors='ignore').strip()
                                 if decoded:
-                                    self.logger.info(f"📥 DECODED: '{decoded}'")
                                     await self._handle_command(decoded)
                             except Exception as decode_error:
                                 self.logger.error(f"Decode error: {decode_error}")
@@ -580,7 +561,7 @@ async def main():
             print("\n💡 Press Ctrl+C to stop")
             
             await asyncio.gather(
-                client.communication_loop(),
+                # client.communication_loop(),
                 client.update_loop()
             )
         else:
