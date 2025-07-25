@@ -63,13 +63,13 @@ class TFT32Final:
         }
         self.fan_speed = 0  # Fan speed percentage (0-100)
         
-        # Minimal logging
+        # Setup logging for communication monitoring
         self.logger = logging.getLogger('TFT32Final')
-        self.logger.setLevel(logging.WARNING)  # Only warnings and errors
+        self.logger.setLevel(logging.INFO)  # Show communication for debugging
         
         if not self.logger.handlers:
             handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(levelname)s: %(message)s')
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
 
@@ -196,6 +196,7 @@ class TFT32Final:
         try:
             self.serial_conn.write(f"{message}\r\n".encode())
             self.serial_conn.flush()
+            self.logger.debug(f"📤 PI >> TFT: {message}")
         except Exception as e:
             self.logger.error(f"Send error: {e}")
 
@@ -221,6 +222,9 @@ class TFT32Final:
 
     async def _handle_command(self, command: str):
         """Handle incoming commands based on firmware type"""
+        # Log all TFT >> PI communication for debugging
+        self.logger.info(f"📥 TFT >> PI: '{command}'")
+        
         # Check for custom screen request
         if command.startswith('M999'):
             await self._send_comprehensive_data()
@@ -254,7 +258,7 @@ class TFT32Final:
         elif command.startswith('M107'):
             await self._handle_fan_off_command()
         elif command.startswith('G28'):
-            pass  # Home command - just acknowledge
+            self.logger.info("🏠 TFT requested home")
         elif 'action:' in command:
             await self._handle_action_command(command)
 
@@ -264,6 +268,7 @@ class TFT32Final:
         if temp_match:
             target_temp = float(temp_match.group(1))
             self.current_temps['hotend_target'] = target_temp
+            self.logger.info(f"🔥 TFT set hotend target: {target_temp}°C")
             # TODO: Send to Klipper via Moonraker
 
     async def _handle_bed_temp_command(self, command: str):
@@ -272,6 +277,7 @@ class TFT32Final:
         if temp_match:
             target_temp = float(temp_match.group(1))
             self.current_temps['bed_target'] = target_temp
+            self.logger.info(f"🛏️ TFT set bed target: {target_temp}°C")
             # TODO: Send to Klipper via Moonraker
 
     async def _handle_fan_command(self, command: str):
@@ -374,10 +380,13 @@ class TFT32Final:
     async def _handle_action_command(self, command: str):
         """Handle action commands"""
         if "remote pause" in command:
+            self.logger.info("🎮 TFT requested pause")
             await self._send_moonraker_command("printer/print/pause")
         elif "remote resume" in command:
+            self.logger.info("🎮 TFT requested resume")
             await self._send_moonraker_command("printer/print/resume")
         elif "remote cancel" in command:
+            self.logger.info("🎮 TFT requested cancel")
             await self._send_moonraker_command("printer/print/cancel")
 
     async def _send_moonraker_command(self, endpoint: str):
@@ -391,15 +400,37 @@ class TFT32Final:
             self.logger.warning(f"Failed to send Moonraker command: {e}")
 
     async def update_loop(self):
-        """Update printer data from Moonraker"""
+        """Update printer data from Moonraker and broadcast status"""
         while self.running:
             if self.connected and self.detection_complete:
                 try:
                     await self._update_from_moonraker()
+                    await self._broadcast_status_updates()
                 except Exception:
                     pass  # Silent failure, use fallback data
             
             await asyncio.sleep(3.0)  # Update every 3 seconds
+
+    async def _broadcast_status_updates(self):
+        """Broadcast status updates to TFT (continuous data streaming)"""
+        # Send temperature update (what TFT expects continuously)
+        await self._send_temperature_response()
+        
+        # Send print notifications based on state changes
+        if self.firmware_type == FirmwareType.BIGTREETECH:
+            if self.print_stats['state'] == 'printing':
+                # Send print progress notifications
+                if self.print_stats['progress'] > 0:
+                    progress_cmd = f"M118 P0 A1 action:notification Data Left {self.print_stats['progress']:.0f}/100"
+                    await self._send_response(progress_cmd)
+                
+                # Send time left if available
+                if self.print_stats['remaining_time'] > 0:
+                    hours = int(self.print_stats['remaining_time'] // 3600)
+                    minutes = int((self.print_stats['remaining_time'] % 3600) // 60)
+                    seconds = int(self.print_stats['remaining_time'] % 60)
+                    time_cmd = f"M118 P0 A1 action:notification Time Left {hours:02d}h{minutes:02d}m{seconds:02d}s"
+                    await self._send_response(time_cmd)
 
     async def _update_from_moonraker(self):
         """Fetch real data from Moonraker"""
@@ -421,7 +452,7 @@ class TFT32Final:
                     self.current_temps['bed_target'] = status['heater_bed'].get('target', 0.0)
             
             # Get position, print stats, and fan speed
-            stats_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?print_stats&display_status&toolhead&fan"
+            stats_url = f"http://{self.moonraker_host}:{self.moonraker_port}/printer/objects/query?print_stats&display_status&toolhead&fan&heater_fan&nozzle_cooling_fan"
             response = requests.get(stats_url, timeout=3)
             
             if response.status_code == 200:
@@ -445,10 +476,16 @@ class TFT32Final:
                     self.position['y_pos'] = position[1] if len(position) > 1 else 150.0
                     self.position['z_pos'] = position[2] if len(position) > 2 else 10.0
                 
+                # Get fan speed from multiple possible sources (as per documentation)
+                fan_speed = 0.0
                 if 'fan' in status:
-                    fan = status['fan']
-                    fan_speed_ratio = fan.get('speed', 0.0)
-                    self.fan_speed = int(fan_speed_ratio * 100)  # Convert to percentage
+                    fan_speed = max(fan_speed, status['fan'].get('speed', 0.0))
+                if 'heater_fan' in status:
+                    fan_speed = max(fan_speed, status['heater_fan'].get('speed', 0.0))
+                if 'nozzle_cooling_fan' in status:
+                    fan_speed = max(fan_speed, status['nozzle_cooling_fan'].get('speed', 0.0))
+                
+                self.fan_speed = int(fan_speed * 100)  # Convert to percentage
                     
         except Exception:
             pass  # Silent failure, keep using current values
