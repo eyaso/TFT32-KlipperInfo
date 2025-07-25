@@ -64,8 +64,8 @@ class TFT32Plugin:
         # Setup logging
         self.logger = logging.getLogger(f"moonraker.{self.name}")
         
-        # Get printer object for status queries
-        self.printer = self.server.lookup_component("printer")
+        # Printer object will be set when Klipper is ready
+        self.printer = None
         
         # Register plugin startup
         self.server.register_event_handler("server:klippy_ready", self._on_klippy_ready)
@@ -75,6 +75,15 @@ class TFT32Plugin:
         """Called when Klipper is ready"""
         if self.enabled:
             self.logger.info("🚀 TFT32 Plugin starting...")
+            
+            # Now we can safely get the printer component
+            try:
+                self.printer = self.server.lookup_component("printer")
+                self.logger.info("✅ Connected to Klipper printer component")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to get printer component: {e}")
+                return
+                
             await self._start_plugin()
 
     async def _on_klippy_shutdown(self):
@@ -196,32 +205,38 @@ class TFT32Plugin:
     async def _update_from_klipper(self):
         """Fetch real data from Klipper via Moonraker"""
         try:
-            # Get printer status from Klipper
-            result = await self.printer.lookup_object("query_status", None)
-            if result is None:
+            # Check if printer component is available
+            if self.printer is None:
+                return
+                
+            # Get printer objects for status queries
+            objects = ['extruder', 'heater_bed', 'print_stats', 'display_status', 'toolhead', 'fan']
+            result = await self.printer.query_status(objects)
+            
+            if not result:
                 return
                 
             # Temperature data
-            extruder_status = result.get("extruder", {})
-            if extruder_status:
-                self.current_temps['hotend_temp'] = extruder_status.get('temperature', 25.0)
-                self.current_temps['hotend_target'] = extruder_status.get('target', 0.0)
+            if 'extruder' in result:
+                extruder = result['extruder']
+                self.current_temps['hotend_temp'] = extruder.get('temperature', 25.0)
+                self.current_temps['hotend_target'] = extruder.get('target', 0.0)
             
-            heater_bed_status = result.get("heater_bed", {})
-            if heater_bed_status:
-                self.current_temps['bed_temp'] = heater_bed_status.get('temperature', 22.0)
-                self.current_temps['bed_target'] = heater_bed_status.get('target', 0.0)
+            if 'heater_bed' in result:
+                heater_bed = result['heater_bed']
+                self.current_temps['bed_temp'] = heater_bed.get('temperature', 22.0)
+                self.current_temps['bed_target'] = heater_bed.get('target', 0.0)
             
             # Print statistics
-            print_stats = result.get("print_stats", {})
-            if print_stats:
+            if 'print_stats' in result:
+                print_stats = result['print_stats']
                 self.print_stats['state'] = print_stats.get('state', 'standby')
                 self.print_stats['filename'] = print_stats.get('filename', '')
                 self.print_stats['print_time'] = print_stats.get('print_duration', 0.0)
             
             # Display status (progress)
-            display_status = result.get("display_status", {})
-            if display_status:
+            if 'display_status' in result:
+                display_status = result['display_status']
                 self.print_stats['progress'] = display_status.get('progress', 0.0) * 100
                 
                 # Calculate remaining time
@@ -230,16 +245,16 @@ class TFT32Plugin:
                     self.print_stats['remaining_time'] = max(0, total_time_estimate - self.print_stats['print_time'])
             
             # Toolhead position
-            toolhead = result.get("toolhead", {})
-            if toolhead:
+            if 'toolhead' in result:
+                toolhead = result['toolhead']
                 position = toolhead.get('position', [150, 150, 10, 0])
                 self.position['x_pos'] = position[0] if len(position) > 0 else 150.0
                 self.position['y_pos'] = position[1] if len(position) > 1 else 150.0
                 self.position['z_pos'] = position[2] if len(position) > 2 else 10.0
             
             # Fan speed
-            fan = result.get("fan", {})
-            if fan:
+            if 'fan' in result:
+                fan = result['fan']
                 fan_speed_ratio = fan.get('speed', 0.0)
                 self.fan_speed = int(fan_speed_ratio * 100)
                 
